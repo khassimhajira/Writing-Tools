@@ -39,19 +39,34 @@ router.post('/login', async (req, res) => {
             if (amUser) {
                 // User found in aMember! Shadow them into our local DB
                 if (!user) {
-                    await run('INSERT INTO users (username, email, password_hash, role) VALUES (?, ?, ?, ?)', 
+                    const result = await run('INSERT INTO users (username, email, password_hash, role) VALUES (?, ?, ?, ?)', 
                         [amUser.username, amUser.email, amUser.password_hash, 'user']);
-                    user = await get('SELECT * FROM users WHERE email = ?', [amUser.email]);
-                    
-                    // Automatically assign them to the StealthWriter service if they are new
-                    const service = await get("SELECT id FROM services WHERE slug = 'stealth'");
-                    if (service) {
-                        await run('INSERT OR IGNORE INTO user_assignments (user_id, service_id) VALUES (?, ?)', [user.id, service.id]);
-                    }
+                    user = await get('SELECT * FROM users WHERE id = ?', [result.lastID]);
                 } else {
-                    // Update existing local user's hash to match aMember
                     await run('UPDATE users SET password_hash = ? WHERE id = ?', [amUser.password_hash, user.id]);
                     user.password_hash = amUser.password_hash;
+                }
+
+                // --- AUTO-ASSIGNMENT LOGIC ---
+                // Ensure they have a slot for StealthWriter
+                const service = await get("SELECT id FROM services WHERE slug = 'stealth'");
+                if (service) {
+                    // Check if they already have an assignment
+                    const existingAssignment = await get('SELECT id, cookie_id FROM user_assignments WHERE user_id = ? AND service_id = ?', [user.id, service.id]);
+                    
+                    if (!existingAssignment || !existingAssignment.cookie_id) {
+                        // Find an available cookie for this service
+                        const cookie = await get('SELECT id FROM cookies WHERE service_id = ? LIMIT 1', [service.id]);
+                        if (cookie) {
+                            await run(`INSERT INTO user_assignments (user_id, service_id, cookie_id) 
+                                       VALUES (?, ?, ?) 
+                                       ON CONFLICT(user_id, service_id) DO UPDATE SET cookie_id = EXCLUDED.cookie_id`, 
+                                       [user.id, service.id, cookie.id]);
+                        } else {
+                            // Even if no cookie exists yet, at least give them the service entry
+                            await run('INSERT OR IGNORE INTO user_assignments (user_id, service_id) VALUES (?, ?)', [user.id, service.id]);
+                        }
+                    }
                 }
                 validPassword = true;
             }
