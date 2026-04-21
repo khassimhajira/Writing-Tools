@@ -4,8 +4,8 @@
   "description": "Premium Proxy Hub for StealthWriter with Anti-Detection",
   "main": "server.js",
   "scripts": {
-    "start": "D:\\nodejs\\node.exe server.js",
-    "dev": "D:\\nodejs\\node.exe server.js"
+    "start": "node server.js",
+    "dev": "node server.js"
   },
   "dependencies": {
     "adm-zip": "^0.5.17",
