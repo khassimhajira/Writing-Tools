@@ -43,34 +43,8 @@
                 </div>
                 <button type="submit">Login to Hub</button>
             </form>
-            <div style="text-align:center;margin-top:1rem;font-size:0.9rem;">
-                Don't have an account? <a href="#" id="show-register" style="color:var(--primary-color);">Sign Up</a>
-            </div>
-        </div>
-
-        <div class="auth-container card animate-in" id="register-box">
-            <h2 style="margin-bottom:1rem;text-align:center;">Create Account</h2>
-            <div id="register-alert" class="alert"></div>
-            <form id="register-form">
-                <div class="form-group">
-                    <label>Username</label>
-                    <input type="text" id="reg-user" required>
-                </div>
-                <div class="form-group">
-                    <label>Email</label>
-                    <input type="email" id="reg-email" required>
-                </div>
-                <div class="form-group">
-                    <label>Password</label>
-                    <input type="password" id="reg-password" required>
-                    <div class="password-toggle" onclick="togglePass('reg-password', this)">
-                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
-                    </div>
-                </div>
-                <button type="submit">Register</button>
-            </form>
-            <div style="text-align:center;margin-top:1rem;font-size:0.9rem;">
-                Already have an account? <a href="#" id="show-login" style="color:var(--primary-color);">Sign In</a>
+            <div style="text-align:center;margin-top:1rem;font-size:0.9rem; color: var(--text-muted);">
+                Member access only. Please pay via our main site to get an account.
             </div>
         </div>
     </div>
@@ -125,22 +99,7 @@
         updateThemeUI(savedTheme);
 
         // Auth UI Switch
-        const showReg = document.getElementById('show-register');
-        const showLog = document.getElementById('show-login');
-        if (showReg) {
-            showReg.onclick = (e) => {
-                e.preventDefault();
-                document.getElementById('login-box').style.display = 'none';
-                document.getElementById('register-box').style.display = 'block';
-            };
-        }
-        if (showLog) {
-            showLog.onclick = (e) => {
-                e.preventDefault();
-                document.getElementById('register-box').style.display = 'none';
-                document.getElementById('login-box').style.display = 'block';
-            };
-        }
+        // Disabled: Registration is now handled via aMember Pro
     </script>
 </body>
 </html>

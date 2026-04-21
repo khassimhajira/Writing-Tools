@@ -9,22 +9,12 @@ const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'stealth_secret_key_123';
 const JWT_EXPIRY = process.env.JWT_EXPIRY || '7d';
 
-// Register
+/* 
 router.post('/register', async (req, res) => {
-    const { username, email, password } = req.body;
-    try {
-        const existing = await get('SELECT id FROM users WHERE email = ?', [email]);
-        if (existing) return res.status(400).json({ error: 'Email already registered' });
-
-        const salt = await bcrypt.genSalt(10);
-        const hash = await bcrypt.hash(password, salt);
-        
-        await run('INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)', [username, email, hash]);
-        res.status(201).json({ message: 'Registration successful' });
-    } catch(e) {
-        res.status(500).json({ error: 'Database error' });
-    }
+    // Disabled to enforce aMember registration
+    return res.status(403).json({ error: 'Registration is handled via aMember Pro.' });
 });
+*/
 
 // Login
 router.post('/login', async (req, res) => {
