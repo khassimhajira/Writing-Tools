@@ -1,0 +1,83 @@
+a:4:{s:4:"data";s:2207:"s:2197:"<h2>Today<span class="widget-title-info"> &middot;
+            04/21/26    </span></h2>
+<div class="admin-dashboard-wrapper">
+<table class="admin-dashboard">
+    <tr>
+        <td class="first">
+                        <dl>
+    <dt>Payments</dt>
+    <dd>
+                    0
+            </dd>
+</dl>
+                        <dl>
+    <dt>Refunds</dt>
+    <dd>
+                    0
+            </dd>
+</dl>
+                                            </td>
+        <td>
+                        <dl>
+    <dt>Registrations</dt>
+        <dd>
+                    <a class="link" href="/admin-users/index?_u_search%5Badded-between%5D%5Bstart%5D=04%2F21%2F26&amp;_u_search%5Badded-between%5D%5Bstop%5D=04%2F21%2F26">1</a>
+            </dd>
+</dl>
+                        <dl>
+    <dt>Cancellations</dt>
+        <dd>
+                    0
+            </dd>
+</dl>
+                        <dl>
+    <dt>Rebills <small title="04/22/26" style="opacity: .7;">next day</small></dt>
+        <dd>
+                    0
+            </dd>
+</dl>
+                    </td>
+    </tr>
+</table>
+</div><h2>This Week (Sun-Sat)<span class="widget-title-info"> &middot;
+            04/19/26&ndash;04/25/26    </span></h2>
+<div class="admin-dashboard-wrapper">
+<table class="admin-dashboard">
+    <tr>
+        <td class="first">
+                        <dl>
+    <dt>Payments</dt>
+    <dd>
+                    0
+            </dd>
+</dl>
+                        <dl>
+    <dt>Refunds</dt>
+    <dd>
+                    0
+            </dd>
+</dl>
+                                            </td>
+        <td>
+                        <dl>
+    <dt>Registrations</dt>
+        <dd>
+                    <a class="link" href="/admin-users/index?_u_search%5Badded-between%5D%5Bstart%5D=04%2F19%2F26&amp;_u_search%5Badded-between%5D%5Bstop%5D=04%2F25%2F26">1</a>
+            </dd>
+</dl>
+                        <dl>
+    <dt>Cancellations</dt>
+        <dd>
+                    0
+            </dd>
+</dl>
+                        <dl>
+    <dt>Rebills <small title="04/22/26&ndash;04/29/26" style="opacity: .7;">next 7 days</small></dt>
+        <dd>
+                    0
+            </dd>
+</dl>
+                    </td>
+    </tr>
+</table>
+</div>";";s:8:"lifetime";i:2592000;s:6:"expire";i:1779396252;s:8:"priority";i:8;}

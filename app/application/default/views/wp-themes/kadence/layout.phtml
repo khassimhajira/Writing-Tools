@@ -1,0 +1,20 @@
+<?php
+$body_class;
+Am_Di::getInstance()->plugins_protect->get('wordpress')
+    ->startLayout($this, isset($meta_title) ? $meta_title : $title, true, empty($body_class) ? null : $body_class);
+get_header();
+?>
+<style>
+    body {display: block}
+</style>
+<div id="primary" class="content-area">
+    <div class="content-container site-container">
+        <main id="main" class="site-main" role="main">
+<?php
+include __DIR__ . "/../amember.php";
+?>
+        </main>
+    </div>
+</div>
+<?php
+get_footer();

@@ -1,0 +1,22 @@
+a:4:{s:4:"data";s:1392:"s:1382:"<div class="admin-last admin-activity">
+    <h2>Recent Activity</h2>
+    <div class="am-grid-container">
+        <table class="am-grid grid-no-highlight">
+                        <tr
+                class="am-grid-row even admin-activity_event admin-activity_event-signin">
+                <td>
+                                                    <a class="link" href="/admin-users?_u_a=edit&_u_id=1" data-tooltip-url="/admin-users/card?id=1">Best</a><!--
+    --> logged in from 223.123.11.113                        <br />
+                        <time class="admin-activity_event-time" datetime="2026-04-21T20:38:52+00:00" title="04/21/26, 08:38 PM">&#x1f550; 5 min ago</time>                                    </td>
+            </tr>
+                        <tr
+                class="am-grid-row odd admin-activity_event admin-activity_event-signup">
+                <td>
+                                                    <a class="link" href="/admin-users?_u_a=edit&_u_id=1" data-tooltip-url="/admin-users/card?id=1">Best</a><!--
+    --> registered a new account from 223.123.10.125                        <br />
+                        <time class="admin-activity_event-time" datetime="2026-04-21T17:54:14+00:00" title="04/21/26, 05:54 PM">&#x1f550; 2 hrs ago</time>                                    </td>
+            </tr>
+                    </table>
+    </div>
+</div>
+";";s:8:"lifetime";i:2592000;s:6:"expire";i:1779396252;s:8:"priority";i:8;}

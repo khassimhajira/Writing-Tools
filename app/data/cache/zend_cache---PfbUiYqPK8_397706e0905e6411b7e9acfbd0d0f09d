@@ -1,0 +1,32 @@
+a:4:{s:4:"data";s:1582:"s:1572:"<div class="admin-last admin-lastusers">
+    <h2>Last 5 Customers</h2>
+    <div class="am-grid-container">
+        <table class="am-grid grid-no-highlight">
+            <tr>
+                <th class="helper-corner-left">User</th>
+                <th>Status</th>
+                <th class="container-width-narrow-hide">Added</th>
+                <th class="helper-corner-right">Payments</th>
+            </tr>
+                        <tr class="am-grid-row even">
+                <td>                        <a class="link" href="/admin-users?_u_a=edit&_u_id=1" data-tooltip-url="/admin-users/card?id=1">Best</a>
+                                        <br />
+                    Best@mentora.uno</td>
+                <td>
+                    <span class="user-status user-status-active">Active</span>                </td>
+                <td class="container-width-narrow-hide"><time datetime="2026-04-21T17:54:14+00:00" title="2 hrs ago">
+                                            05:54 PM                                        </time></td>
+                <td>
+                                            Never                                    </td>
+            </tr>
+            <tr class="am-grid-row even">
+                <td colspan="4" class="container-width-narrow-show">
+                    <div class="admin-last_time">
+                        &#x1f550; <time datetime="2026-04-21T17:54:14+00:00" title="2 hrs ago">04/21/26, 05:54 PM</time>
+                    </div>
+                </td>
+            </tr>
+                    </table>
+    </div>
+</div>
+";";s:8:"lifetime";i:2592000;s:6:"expire";i:1779396252;s:8:"priority";i:8;}

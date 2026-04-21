@@ -17,6 +17,7 @@
     "http-proxy": "^1.18.1",
     "https-proxy-agent": "^9.0.0",
     "jsonwebtoken": "^9.0.3",
+    "mysql2": "^3.22.2",
     "socket.io": "^4.8.3",
     "sqlite3": "^6.0.1"
   }

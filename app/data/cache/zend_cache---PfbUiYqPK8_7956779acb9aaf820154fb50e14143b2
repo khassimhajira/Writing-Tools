@@ -1,0 +1,10 @@
+a:4:{s:4:"data";s:527:"s:518:"<h2>Users Report</h2>
+<div class="admin-index-report-wrapper">
+    <div class="admin-index-report report-users">
+        <div id='report-024a8' style='width: 100%; height: 250px;'></div>
+<script>
+jQuery(function(){
+    new Morris.Bar({"data":[{"x":"Pending","y0":0},{"x":"Active","y0":1},{"x":"Expired","y0":0},{"x":"Active (free)","y0":1}],"hideHover":"auto","xLabelMargin":10,"gridTextSize":10,"xkey":"x","resize":true,"ykeys":["y0"],"labels":["# of users"],"element":"report-024a8"});
+});
+</script>    </div>
+</div>";";s:8:"lifetime";i:2592000;s:6:"expire";i:1779396252;s:8:"priority";i:8;}

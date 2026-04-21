@@ -1,0 +1,371 @@
+<?php
+/**
+ * @title Webhooks
+ * @desc send data to remote addresses for configured events
+ * @setup_url webhooks/admin
+ *
+ * @todo cron to remove old sent hooks
+ */
+class Bootstrap_Webhooks extends Am_Module
+{
+    const ADMIN_PERM_ID = 'webhooks';
+    const MAX_FAILURES = 10;
+    const FAILURE_DELAY = 300; // 5 minutes
+
+    const EVENT_WEBHOOK_TYPES = 'webhookTypes';
+    const EVENT_WEBHOOK_PARAMS = 'webhookParams';
+
+    protected $webhooks = [];
+    protected $webhooksLoaded = false;
+    protected $types = [
+            Am_Event::ACCESS_AFTER_INSERT =>
+                [
+                    'title' => 'Access record inserted',
+                    'description' => '',
+                    'params' => ['access'],
+                    'nested' => ['user'],
+                ],
+            Am_Event::ACCESS_AFTER_DELETE =>
+                [
+                    'title' => 'Access record deleted',
+                    'description' => '',
+                    'params' => ['access'],
+                    'nested' => ['user'],
+                ],
+            Am_Event::ACCESS_AFTER_UPDATE =>
+                [
+                    'title' => 'Access record updated',
+                    'description' => '',
+                    'params' => ['access','old'],
+                    'nested' => ['user'],
+                ],
+            Am_Event::INVOICE_AFTER_CANCEL =>
+                [
+                    'title' => 'Called after invoice cancelation',
+                    'description' => '',
+                    'params' => ['invoice'],
+                    'nested' => ['user'],
+                ],
+            Am_Event::INVOICE_AFTER_DELETE =>
+                [
+                    'title' => 'Called after invoice deletion',
+                    'description' => '',
+                    'params' => ['invoice'],
+                    'nested' => ['user'],
+                ],
+            Am_Event::INVOICE_AFTER_INSERT =>
+                [
+                    'title' => 'Called after invoice insertion',
+                    'description' => '',
+                    'params' => ['invoice'],
+                    'nested' => ['user'],
+                ],
+            Am_Event::INVOICE_PAYMENT_REFUND =>
+                [
+                    'title' => 'Called after invoice payment refund (or chargeback)',
+                    'description' => '',
+                    'params' => ['invoice','refund'],
+                    'nested' => ['user'],
+                ],
+            Am_Event::INVOICE_STARTED =>
+                [
+                    'title' => 'Called when an invoice becomes active_recurring or paid, or free trial is started',
+                    'description' => '',
+                    'params' => ['user','invoice','payment']
+                ],
+            Am_Event::INVOICE_STATUS_CHANGE =>
+                [
+                    'title' => 'Called when invoice status is changed',
+                    'description' => '',
+                    'params' => ['invoice','status','oldStatus'],
+                    'nested' => ['user'],
+                ],
+            Am_Event::PAYMENT_AFTER_INSERT =>
+                [
+                    'title' => 'Payment record inserted into database. Is not called for free subscriptions',
+                    'description' => '',
+                    'params' => ['invoice','payment','user'],
+                    'nested' => ['items']
+                ],
+            Am_Event::PAYMENT_WITH_ACCESS_AFTER_INSERT =>
+                [
+                    'title' => 'Payment record with access inserted into database. Is not called for free subscriptions. Required to get access records',
+                    'description' => '',
+                    'params' => ['invoice','payment','user'],
+                    'nested' => ['items']
+                ],
+            Am_Event::USER_AFTER_INSERT =>
+                [
+                    'title' => 'Called after user record is inserted into table',
+                    'description' => '',
+                    'params' => ['user'],
+                ],
+            Am_Event::USER_AFTER_UPDATE =>
+                [
+                    'title' => 'Called after user record is updated in database',
+                    'description' => '',
+                    'params' => ['user','oldUser'],
+                ],
+            Am_Event::USER_AFTER_DELETE =>
+                [
+                    'title' => 'Called after customer record deletion',
+                    'description' => '',
+                    'params' => ['user'],
+                ],
+            Am_Event::SUBSCRIPTION_ADDED => [
+                'title' => 'Called when user receives a subscription to product he was not subscribed earlier',
+                'description' => '',
+                'params' => ['user', 'product'],
+            ],
+            Am_Event::SUBSCRIPTION_DELETED => [
+                'title' => 'Called when user subscription access is expired',
+                'description' => '',
+                'params' => ['user', 'product'],
+            ],
+            Am_Event::USER_NOTE_AFTER_INSERT => [
+                'title' => 'Called when admin add new note to user account',
+                'description' => '',
+                'params' => ['user', 'note'],
+            ],
+            Am_Event::SET_PASSWORD => [
+                'title' => 'Called when password is changed',
+                'description' => '',
+                'params' => ['user', 'password'],
+            ],
+    ];
+
+    function onSetupEmailTemplateTypes(Am_Event $e)
+    {
+        $e->addReturn([
+            'id' => 'webhooks.admin_failed',
+            'title' => 'Notify About Permanently Failed Webhooks',
+            'mailPeriodic' => Am_Mail::BACKGROUND,
+            'isAdmin' => true,
+            'vars' => [
+                'webhook.comment' => ___('Comment'),
+                'webhook.event_id' => ___('Event'),
+                'webhook.url' => ___('URL'),
+            ],
+        ], 'webhooks.admin_failed');
+    }
+
+    function onGetPermissionsList(Am_Event $event)
+    {
+        $event->addReturn(___('Can manage webhooks'), self::ADMIN_PERM_ID);
+    }
+
+    function onInitFinished(Am_Event $event)
+    {
+        foreach ($this->getTypes() as $k => $v) {
+            $this->getDi()->hook->add($k, [$this, 'doWork']);
+        }
+    }
+
+    function onAdminMenu(Am_Event $event)
+    {
+        $event->getMenu()->addPage([
+            'id' => 'webhooks',
+            'uri' => 'javascript:;',
+            'label' => ___('Webhooks'),
+            'resource' => self::ADMIN_PERM_ID,
+            'pages' => [
+                [
+                    'id' => 'webhooks-configuration',
+                    'controller' => 'admin',
+                    'module' => 'webhooks',
+                    'label' => ___('Configuration'),
+                    'resource' => self::ADMIN_PERM_ID,
+                ],
+                [
+                    'id' => 'webhooks-queue',
+                    'controller' => 'admin-queue',
+                    'module' => 'webhooks',
+                    'label' => ___("Queue"),
+                    'resource' => self::ADMIN_PERM_ID,
+                ]
+            ]
+        ]);
+    }
+
+    function getTypes()
+    {
+        return $this->getDi()->hook->filter($this->types, self::EVENT_WEBHOOK_TYPES);
+    }
+
+    function getConfiguredWebhooks()
+    {
+        if (!$this->webhooksLoaded)
+        {
+            $this->webhooks = [];
+            $rows = $this->getDi()->db->select("SELECT * FROM ?_webhook WHERE is_disabled=0");
+            foreach ($rows as $row) {
+                $this->webhooks[$row['event_id']][] = $row;
+            }
+            $this->webhooksLoaded = true;
+        }
+        return $this->webhooks;
+    }
+
+    public function getObjectData($obj)
+    {
+        if ($obj instanceof Am_Record) {
+            $ret = $obj->toRow();
+            if ($obj instanceof Am_Record_WithData) {
+                $data = $obj->data()->getAll();
+                if (!empty($data)) {
+                    $ret += array_combine(array_map(function ($k) {
+                        return "data." . $k;
+                    }, array_keys($data)), array_values($data));
+                }
+            }
+            if ($obj instanceof User) {
+                unset($ret['last_session']);
+                if ($pass = $obj->getPlaintextPass()){
+                    $ret['plain_password'] = $pass;
+                }
+            }
+            return $ret;
+        } elseif (is_object($obj)) {
+            return get_object_vars($obj);
+        } elseif (is_array($obj)) {
+            return array_map(function ($v) {
+                return $this->getObjectData($v);
+            }, $obj);
+        } else {
+            return (string)$obj;
+        }
+    }
+
+    public function prepareData(Am_Event $event, $data = [])
+    {
+        $id = $event->getId();
+        $data['am-webhooks-version'] = '1.0';
+        $data['am-event'] = $id;
+        $data['am-timestamp'] = date('c');
+        $data['am-root-url'] = ROOT_URL;
+
+        $types = $this->getTypes();
+        $fields = $types[$id]['params'];
+        $nestedFields = $types[$id]['nested'] ?? [];
+
+        $parentField = $fields[0];
+        $parentObj = null;
+        foreach ($fields as $field) {
+            $obj = call_user_func([$event, 'get' . ucfirst($field)]);
+            if ($parentField == $field) {
+                $parentObj = $obj;
+            }
+            $data = array_merge($data, [$field => $this->getObjectData($obj)]);
+        }
+        if ($parentObj) {
+            foreach ($nestedFields as $nField) {
+                $nObj = call_user_func([$parentObj, 'get' . ucfirst($nField)]);
+                $data = array_merge($data, [$nField => $this->getObjectData($nObj)]);
+            }
+        }
+        return $data;
+    }
+
+    public function doWork(Am_Event $event, $data = [])
+    {
+        $webhooks = $this->getConfiguredWebhooks();
+        $id = $event->getId();
+        if (empty($webhooks[$id])) return;
+
+        $data = $this->getDi()->hook->filter($this->prepareData($event, $data), self::EVENT_WEBHOOK_PARAMS, ['event' => $event]);
+        $tmpl = new Am_SimpleTemplate();
+        $tmpl->assign($data);
+        foreach($webhooks[$id] as $webhook)
+        {
+            $queue = $this->addToQueue($tmpl->render($webhook['url']), $webhook['headers'], $webhook['event_id'], $data, $webhook['webhook_id']);
+
+            if (defined('AM_WEBHOOKS_INSTANT') && AM_WEBHOOKS_INSTANT) // This is awful idea. Do not make it documented and public setting
+            {
+                $this->sendRequest($queue);
+            }
+        }
+    }
+
+    function addToQueue($url, $headers, $event_id, $params, $webhook_id)
+    {
+        $queue = $this->getDi()->webhookQueueRecord;
+        $queue->url = $url;
+        $queue->headers = $headers;
+        $queue->event_id = $event_id;
+        $queue->params = serialize($params);
+        $queue->added = $this->getDi()->time;
+        $queue->webhook_id = $webhook_id;
+        $queue->insert();
+        return $queue;
+    }
+
+    public function runCron()
+    {
+        $time_limit = 50; // Executed once a minute anyway
+        // get lock
+        if (!$this->getDi()->db->selectCell("SELECT GET_LOCK(?, 50)", $this->getLockId())) {
+            $this->getDi()->logger->error("Could not obtain MySQL's GET_LOCK() to run webhooks cron. Probably attempted to execute two cron processes simultaneously. ");
+            return;
+        }
+        $start = time();
+        foreach($this->getDi()->webhookQueueTable->findBy(['sent' => null, ['failures', '<', self::MAX_FAILURES]], 0, 1000) as $webhook_queue)
+        {
+            if (
+                !empty($webhook_queue->next_attempt)
+                && $webhook_queue->next_attempt > $this->getDi()->time
+            ) {
+                continue;
+            }
+
+            if (time() - $start >= $time_limit) break;
+            $this->sendRequest($webhook_queue);
+        }
+        //release lock
+        $this->getDi()->db->query("SELECT RELEASE_LOCK(?)", $this->getLockId());
+    }
+
+    protected function sendRequest(WebhookQueue $webhook_queue)
+    {
+        try {
+            $req = new Am_HttpRequest($webhook_queue->url, Am_HttpRequest::METHOD_POST);
+            $req->setHeader($webhook_queue->getHeaders());
+            $params = unserialize($webhook_queue->params);
+            foreach ($params as $name => $data) {
+                if (is_array($data)) {
+                    unset($params[$name]);
+                    foreach ($data as $k => $v) {
+                        $params[$name . '[' . $k . ']'] = $v;
+                    }
+                }
+            }
+            $req->addPostParameter($params);
+            $res = $req->send();
+            $st = $res->getStatus();
+            if ($st == 200) {
+                $webhook_queue->updateQuick(['sent' => $this->getDi()->time]);
+            } else {
+                $webhook_queue->updateQuick([
+                    'last_error' => $st,
+                    'failures' => $webhook_queue->failures + 1,
+                    'next_attempt' => $this->getDi()->time + self::FAILURE_DELAY,
+                ]);
+            }
+            if ($this->getConfig('admin_failed') && $webhook_queue->failures >= self::MAX_FAILURES) {
+                if ($et = Am_Mail_Template::load('webhooks.admin_failed')) {
+                    $webhook = $webhook_queue->webhook_id
+                        ? $this->getDi()->webhookTable->load($webhook_queue->webhook_id)
+                        : $webhook_queue;
+                    $et->setWebhook($webhook);
+                    $et->send(Am_Mail_Template::TO_ADMIN);
+                }
+            }
+        } catch (Exception $e)  {
+            $this->getDi()->logger->error("webhooks exception", ["exception" => $e]);
+        }
+    }
+
+    public function getLockId()
+    {
+        return 'webhooks-cron-lock-' . md5(__FILE__);
+    }
+}

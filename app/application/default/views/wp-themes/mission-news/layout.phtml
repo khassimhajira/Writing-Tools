@@ -1,0 +1,17 @@
+<?php
+add_filter("is_active_sidebar", function() {return false;});
+
+$body_class = 'layout-no-sidebar-full-width';
+Am_Di::getInstance()->plugins_protect->get('wordpress')
+    ->startLayout($this, isset($meta_title) ? $meta_title : $title, true, empty($body_class) ? null : $body_class);
+get_header();
+?>
+<style>
+    body, html {
+        height: unset;
+    }
+</style>
+<?php  include __DIR__ . "/../amember.php";
+?>
+<?php
+get_footer();

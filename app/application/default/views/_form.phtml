@@ -1,0 +1,6 @@
+<?php
+/* @var $form Am_Form */
+$renderer = new Am_Form_Renderer(Am_Form_Renderer::UI_USER);
+$renderer->setView($this);
+/* @var $renderer HTML_QuickForm2_Renderer_Default */
+echo $form->render($renderer);

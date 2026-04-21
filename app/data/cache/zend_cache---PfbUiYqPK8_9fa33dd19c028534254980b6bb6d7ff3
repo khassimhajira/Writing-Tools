@@ -1,0 +1,32 @@
+a:4:{s:4:"data";s:2966:"s:2956:"<div class="widget-quickstart">
+    <div class="widget-quickstart-content">
+        <div class="widget-quickstart-disable">
+            <a href="/admin/disable-quickstart" class="link">do not show this again</a>
+        </div>
+        <h2>Thank you for choosing aMember Pro software! This guide was designed to help you start using it.</h2>
+        <ul>
+            <li><span class="quickstart-img quickstart-currency"></span>
+                <a class="link" target="_blank" href="/admin-setup">Choose base currency</a> for your installation, it is not possible to change base currency once you get first payment            </li>
+            <li><span class="quickstart-img quickstart-theme"></span>
+                Upload Logo image in Theme <a class="link" target="_blank" href="/admin-setup/themes-default">configuration page</a> or enable usage of WordPress theme if you use WordPress integration.            </li>
+            <li><span class="quickstart-img quickstart-settings"></span>
+                Visit <a class="link" target="_blank" href="/admin-plugins">Addons</a> and enable all necessary modules and plugins. Configure each of newly enabled plugins.            </li>
+            <li><span class="quickstart-img quickstart-product"></span>
+                Visit <a class="link" target="_blank" href="/admin-products">Products Manager</a> to add new products - subscription types. You can also define product
+                categories to group products.            </li>
+            <li><span class="quickstart-img quickstart-content"></span>
+                Visit <a class="link" target="_blank" href="/admin-content">Content Manager</a> to protect site folders, upload members-only files and pages.            </li>
+            <li><span class="quickstart-img quickstart-user"></span>
+                You can add additional fields to user profile if necessary in section <a class="link" target="_blank" href="/admin-fields">Add User Fields</a>            </li>
+            <li><span class="quickstart-img quickstart-form"></span>
+                Configure your Signup Form in <a class="link" target="_blank" href="/admin-saved-form">Drag & Drop Forms Editor</a>            </li>
+            <li><span class="quickstart-img quickstart-signup"></span>
+                Try to start new <a class="link" target="_blank" href="/signup">sign up</a>. On success, you should receive an e-mail
+                message from aMember, and get access to configured files and folders.           </li>
+            <li><span class="quickstart-img quickstart-login"></span>
+                Try to <a class="link" target="_blank" href="/member">log in</a> as the new customer. If all handled correctly, you should get access
+                to configured protected content. If not, visit <a class="link" target="_blank" href="/admin-logs">logs section</a> to find idea why something
+                went wrong.           </li>
+        </ul>
+    </div>
+</div>";";s:8:"lifetime";i:2592000;s:6:"expire";i:1779396252;s:8:"priority";i:8;}
