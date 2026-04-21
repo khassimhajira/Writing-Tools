@@ -160,6 +160,15 @@ router.get('/users', async (req, res) => {
     } catch(e) { res.status(500).json({ error: 'Database error' }); }
 });
 
+// Get aMember Users (for Sync view)
+router.get('/amember-users', async (req, res) => {
+    try {
+        const { getAmemberUsers } = require('../amember');
+        const amUsers = await getAmemberUsers();
+        res.json(amUsers);
+    } catch(e) { res.status(500).json({ error: 'aMember database error' }); }
+});
+
 
 // Create User (Manual)
 router.post('/users', async (req, res) => {

@@ -72,4 +72,21 @@ async function checkAmemberAuth(loginOrEmail, password) {
     }
 }
 
-module.exports = { checkAmemberAuth };
+async function getAmemberUsers() {
+    if (process.env.AMEMBER_ENABLE !== 'true' || !pool) return [];
+
+    try {
+        const prefix = amemberConfig.prefix;
+        const [users] = await pool.execute(
+            `SELECT u.user_id, u.login, u.email, u.name_f, u.name_l, 
+             (SELECT COUNT(*) FROM ${prefix}access a WHERE a.user_id = u.user_id AND a.begin_date <= CURDATE() AND a.expire_date >= CURDATE()) as has_access
+             FROM ${prefix}user u`
+        );
+        return users;
+    } catch (e) {
+        console.error('aMember List Error:', e);
+        return [];
+    }
+}
+
+module.exports = { checkAmemberAuth, getAmemberUsers };
