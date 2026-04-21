@@ -55,6 +55,10 @@ async function checkAmemberAuth(loginOrEmail, password) {
         if (amPass.startsWith('$2y$') || amPass.startsWith('$2a$')) {
             const checkPass = amPass.startsWith('$2y$') ? '$2a$' + amPass.substring(4) : amPass;
             valid = await bcrypt.compare(password, checkPass);
+        } else if (amPass.startsWith('$P$') || amPass.startsWith('$H$')) {
+            // PHPass support (WordPress/aMember format)
+            console.log(`[aMember Bridge] Step 3: Verifying PHPass format...`);
+            valid = verifyPhpass(password, amPass);
         } else {
             console.log(`[aMember Bridge] Step 3: WARNING - Unknown password format: ${amPass.substring(0, 5)}...`);
         }
@@ -107,6 +111,41 @@ async function getAmemberUsers() {
         console.error('aMember List Error:', e);
         return [];
     }
+}
+
+// PHPass verification helper
+function verifyPhpass(password, hash) {
+    const crypto = require('crypto');
+    const itoa64 = './0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+    
+    function encode64(input, count) {
+        let output = '';
+        let i = 0;
+        do {
+            let value = input[i++];
+            output += itoa64[value & 0x3f];
+            if (i < count) value |= input[i] << 8;
+            output += itoa64[(value >> 6) & 0x3f];
+            if (i++ >= count) break;
+            if (i < count) value |= input[i] << 16;
+            output += itoa64[(value >> 12) & 0x3f];
+            if (i++ >= count) break;
+            output += itoa64[(value >> 18) & 0x3f];
+        } while (i < count);
+        return output;
+    }
+
+    const countLog2 = itoa64.indexOf(hash[3]);
+    const count = 1 << countLog2;
+    const salt = hash.substring(4, 12);
+    
+    let hashBinary = crypto.createHash('md5').update(salt + password).digest();
+    for (let i = 0; i < count; i++) {
+        hashBinary = crypto.createHash('md5').update(Buffer.concat([hashBinary, Buffer.from(password)])).digest();
+    }
+    
+    const newHash = hash.substring(0, 12) + encode64(hashBinary, 16);
+    return newHash === hash;
 }
 
 module.exports = { checkAmemberAuth, getAmemberUsers };
