@@ -36,16 +36,29 @@ async function checkAmemberAuth(loginOrEmail, password) {
         if (users.length === 0) return null;
 
         const amUser = users[0];
+        const bcrypt = require('bcryptjs');
         
-        // aMember 6+ uses PHP password_hash (bcrypt compatible)
-        // Note: PHP's $2y$ is identical to $2a$ for bcryptjs
+        console.log(`[aMember Bridge] Attempting login for: ${amUser.login}`);
+
+        // Handle different aMember password formats
         let amPass = amUser.pass;
-        if (amPass.startsWith('$2y$')) {
-            amPass = '$2a$' + amPass.substring(4);
+        let valid = false;
+
+        if (amPass.startsWith('$2y$') || amPass.startsWith('$2a$')) {
+            // Standard bcrypt (PHP password_hash)
+            const checkPass = amPass.startsWith('$2y$') ? '$2a$' + amPass.substring(4) : amPass;
+            valid = await bcrypt.compare(password, checkPass);
+        } else {
+            // Fallback for older aMember formats or MD5 (rare in v6)
+            // If it's a simple MD5 or salted MD5, we might need more logic
+            // For now, let's log the format to help debug
+            console.log(`[aMember Bridge] Unsupported password format: ${amPass.substring(0, 5)}...`);
         }
 
-        const valid = await bcrypt.compare(password, amPass);
-        if (!valid) return null;
+        if (!valid) {
+            console.log(`[aMember Bridge] Password mismatch for: ${amUser.login}`);
+            return null;
+        }
 
         // Check for active access
         // We look for any active record in the access table
