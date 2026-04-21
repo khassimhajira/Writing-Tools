@@ -23,64 +23,71 @@ if (process.env.AMEMBER_ENABLE === 'true') {
 }
 
 async function checkAmemberAuth(loginOrEmail, password) {
-    if (process.env.AMEMBER_ENABLE !== 'true' || !pool) return null;
+    if (process.env.AMEMBER_ENABLE !== 'true' || !pool) {
+        console.log('[aMember Bridge] Bridge is DISABLED or pool not ready.');
+        return null;
+    }
 
     try {
         const prefix = amemberConfig.prefix;
+        console.log(`[aMember Bridge] Step 1: Searching for user: ${loginOrEmail}`);
+        
         // Search by email or username (login)
         const [users] = await pool.execute(
             `SELECT user_id, login, email, pass, name_f, name_l FROM ${prefix}user WHERE email = ? OR login = ? LIMIT 1`, 
             [loginOrEmail, loginOrEmail]
         );
 
-        if (users.length === 0) return null;
+        if (users.length === 0) {
+            console.log(`[aMember Bridge] Step 2: User NOT FOUND in aMember database.`);
+            return null;
+        }
 
         const amUser = users[0];
         const bcrypt = require('bcryptjs');
         
-        console.log(`[aMember Bridge] Attempting login for: ${amUser.login}`);
+        console.log(`[aMember Bridge] Step 2: User found: ${amUser.login} (ID: ${amUser.user_id})`);
 
         // Handle different aMember password formats
         let amPass = amUser.pass;
         let valid = false;
 
         if (amPass.startsWith('$2y$') || amPass.startsWith('$2a$')) {
-            // Standard bcrypt (PHP password_hash)
             const checkPass = amPass.startsWith('$2y$') ? '$2a$' + amPass.substring(4) : amPass;
             valid = await bcrypt.compare(password, checkPass);
         } else {
-            // Fallback for older aMember formats or MD5 (rare in v6)
-            // If it's a simple MD5 or salted MD5, we might need more logic
-            // For now, let's log the format to help debug
-            console.log(`[aMember Bridge] Unsupported password format: ${amPass.substring(0, 5)}...`);
+            console.log(`[aMember Bridge] Step 3: WARNING - Unknown password format: ${amPass.substring(0, 5)}...`);
         }
 
         if (!valid) {
-            console.log(`[aMember Bridge] Password mismatch for: ${amUser.login}`);
+            console.log(`[aMember Bridge] Step 3: Password MISMATCH for ${amUser.login}`);
             return null;
         }
 
+        console.log(`[aMember Bridge] Step 3: Password VERIFIED.`);
+
         // Check for active access
-        // We look for any active record in the access table
+        console.log(`[aMember Bridge] Step 4: Checking for active subscription...`);
         const [access] = await pool.execute(
             `SELECT access_id FROM ${prefix}access 
-             WHERE user_id = ? AND begin_date <= CURDATE() AND expire_date >= CURDATE() 
+             WHERE user_id = ? AND (expire_date >= CURDATE() OR expire_date IS NULL)
              LIMIT 1`,
             [amUser.user_id]
         );
 
         if (access.length === 0) {
-            console.log(`aMember user ${amUser.login} found but has no active subscription.`);
+            console.log(`[aMember Bridge] Step 4: User has NO active subscription in aMember.`);
             return { error: 'No active subscription found in aMember Pro.' };
         }
 
+        console.log(`[aMember Bridge] Step 5: Access CONFIRMED. Logging in...`);
         return {
             username: amUser.login || amUser.name_f,
             email: amUser.email,
-            password_hash: amPass // We can use this to sync to local DB
+            password_hash: amPass
         };
     } catch (e) {
-        console.error('aMember Auth Bridge Error:', e);
+        console.error('[aMember Bridge] CRITICAL ERROR:', e);
         return null;
     }
 }
