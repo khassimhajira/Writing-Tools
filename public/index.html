@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StealthWriter Hub | Login</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="icon" href="FAVICON.png">
+</head>
+<body>
+    <header>
+        <img src="LOGO.png" alt="Writing Tools" class="logo" onerror="this.outerHTML='<h2 class=\'logo\'>STEALTHWRITER</h2>'">
+        <div class="header-actions">
+            <button class="theme-toggle" id="theme-btn" title="Toggle Theme" style="background:transparent; border:none; padding:8px; display:flex; align-items:center; justify-content:center; cursor:pointer;">
+                <span id="theme-icon-container" style="display:flex; align-items:center;"></span>
+            </button>
+        </div>
+    </header>
+
+    <!-- LANDING PAGE SECTION -->
+    <div id="landing-page" class="hero animate-in">
+        <h1>Powerful Writing, <br>Unlimited Access.</h1>
+        <p>Experience the most advanced AI detection bypass and content refinement tools. <br>Secure, private, and powered by elite premium sessions.</p>
+        <button id="start-btn" style="width: 250px; padding: 1.2rem; font-size: 1.1rem; border-radius: 50px;">GET STARTED NOW</button>
+    </div>
+
+    <!-- AUTH SECTION (Initially Hidden) -->
+    <div id="auth-section" style="display: none;">
+        <div class="auth-container card animate-in" id="login-box" style="display: block;">
+            <h2 style="margin-bottom:1rem;text-align:center;">Sign In</h2>
+            <div id="login-alert" class="alert"></div>
+            <form id="login-form">
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" id="login-email" required>
+                </div>
+                <div class="form-group">
+                    <label>Password</label>
+                    <input type="password" id="login-password" required>
+                    <div class="password-toggle" onclick="togglePass('login-password', this)">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
+                    </div>
+                </div>
+                <button type="submit">Login to Hub</button>
+            </form>
+            <div style="text-align:center;margin-top:1rem;font-size:0.9rem;">
+                Don't have an account? <a href="#" id="show-register" style="color:var(--primary-color);">Sign Up</a>
+            </div>
+        </div>
+
+        <div class="auth-container card animate-in" id="register-box">
+            <h2 style="margin-bottom:1rem;text-align:center;">Create Account</h2>
+            <div id="register-alert" class="alert"></div>
+            <form id="register-form">
+                <div class="form-group">
+                    <label>Username</label>
+                    <input type="text" id="reg-user" required>
+                </div>
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" id="reg-email" required>
+                </div>
+                <div class="form-group">
+                    <label>Password</label>
+                    <input type="password" id="reg-password" required>
+                    <div class="password-toggle" onclick="togglePass('reg-password', this)">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
+                    </div>
+                </div>
+                <button type="submit">Register</button>
+            </form>
+            <div style="text-align:center;margin-top:1rem;font-size:0.9rem;">
+                Already have an account? <a href="#" id="show-login" style="color:var(--primary-color);">Sign In</a>
+            </div>
+        </div>
+    </div>
+
+    <footer class="site-footer">
+        &copy; <span id="year"></span> Writing Tools Hub. All rights reserved.
+    </footer>
+
+    <script src="auth.js"></script>
+    <script>
+        // Set Year
+        document.getElementById('year').innerText = new Date().getFullYear();
+
+        // Password Toggle Logic
+        function togglePass(id, el) {
+            const input = document.getElementById(id);
+            if (input.type === 'password') {
+                input.type = 'text';
+                el.innerHTML = '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"></path></svg>';
+            } else {
+                input.type = 'password';
+                el.innerHTML = '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>';
+            }
+        }
+
+        // Landing Logic
+        document.getElementById('start-btn').onclick = () => {
+            document.getElementById('landing-page').style.display = 'none';
+            document.getElementById('auth-section').style.display = 'block';
+        };
+
+        // Theme Toggle Logic
+        const themeBtn = document.getElementById('theme-btn');
+        const themeContainer = document.getElementById('theme-icon-container');
+        const sunSvg = `<svg style="width:20px;height:20px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707.707M6.343 17.657l-.707.707M17.657 17.657l-.707-.707M6.343 6.343l-.707-.707M12 8a4 4 0 100 8 4 4 0 000-8z"></path></svg>`;
+        const moonSvg = `<svg style="width:20px;height:20px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path></svg>`;
+
+        function updateThemeUI(theme) {
+            themeContainer.innerHTML = theme === 'light' ? moonSvg : sunSvg;
+        }
+
+        themeBtn.onclick = () => {
+            const current = document.documentElement.getAttribute('data-theme') || 'dark';
+            const next = current === 'dark' ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', next);
+            localStorage.setItem('hub-theme', next);
+            updateThemeUI(next);
+        };
+
+        const savedTheme = localStorage.getItem('hub-theme') || 'dark';
+        document.documentElement.setAttribute('data-theme', savedTheme);
+        updateThemeUI(savedTheme);
+
+        // Auth UI Switch
+        const showReg = document.getElementById('show-register');
+        const showLog = document.getElementById('show-login');
+        if (showReg) {
+            showReg.onclick = (e) => {
+                e.preventDefault();
+                document.getElementById('login-box').style.display = 'none';
+                document.getElementById('register-box').style.display = 'block';
+            };
+        }
+        if (showLog) {
+            showLog.onclick = (e) => {
+                e.preventDefault();
+                document.getElementById('register-box').style.display = 'none';
+                document.getElementById('login-box').style.display = 'block';
+            };
+        }
+    </script>
+</body>
+</html>
