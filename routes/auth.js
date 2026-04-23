@@ -142,50 +142,26 @@ router.get('/services', async (req, res) => {
 });
 
 
-// Silent Login from aMember Pro (SSO)
-router.get('/am-login', async (req, res) => {
-    const { email, username } = req.query;
-    const amemberSessionId = req.cookies.amember_nr; // aMember Pro standard session cookie
-    
-    let identifier = email || username;
-    let amUser = null;
-
-    try {
-        const { verifyAmemberSession, verifyAmemberUser } = require('../amember');
-
-        // 1. Try Session-based Login (Most seamless)
-        if (amemberSessionId) {
-            console.log(`[SSO] Checking aMember Session: ${amemberSessionId}`);
-            amUser = await verifyAmemberSession(amemberSessionId);
-            if (amUser) {
-                identifier = amUser.email;
-                console.log(`[SSO] Valid session found for: ${identifier}`);
-            }
-        }
-
-        // 2. Fallback to Email/Username based Login (if no session found)
-        if (!amUser && !identifier) {
-            return res.status(401).send('Access Denied: You are not logged in to aMember Pro, or your session has expired.');
-        }
-
-        console.log(`[SSO] Final login attempt for: ${identifier}`);
-
-        // 3. Find user in Hub DB
-        let user = await get('SELECT id, role, status FROM users WHERE email = ? OR username = ?', [identifier, identifier]);
-        
-        // 4. Verify access in aMember (if not already verified by session)
-        if (!amUser) {
-            const hasAccess = await verifyAmemberUser(identifier);
-            if (!hasAccess) {
-                return res.status(403).send(`Access Denied: No active subscription found for "${identifier}" in aMember Pro.`);
-            }
-        }
-
-        // 5. If they have access but aren't in Hub yet
+        // 5. If they have access in aMember but aren't in Hub yet -> AUTO-CREATE THEM
         if (!user) {
-            console.log(`[SSO] User ${identifier} has access but is missing from Hub. Syncing...`);
-            // You can also trigger an auto-sync here
-            return res.status(401).send(`User "${identifier}" found in aMember but not synced to Hub. Please click "Sync" in Admin Panel once.`);
+            console.log(`[SSO] User ${identifier} has access but is missing from Hub. Creating account...`);
+            
+            // Get full user details from aMember to create Hub account
+            const { getAmemberUsers } = require('../amember');
+            const amUsers = await getAmemberUsers();
+            const amUserFull = amUsers.find(u => u.email === identifier || u.username === identifier);
+
+            if (amUserFull) {
+                const { run } = require('../database');
+                await run(
+                    'INSERT INTO users (username, email, role, status) VALUES (?, ?, ?, ?)',
+                    [amUserFull.username, amUserFull.email, 'user', 'active']
+                );
+                // Fetch the newly created user
+                user = await get('SELECT id, role, status FROM users WHERE email = ?', [amUserFull.email]);
+            } else {
+                return res.status(401).send(`User "${identifier}" verified in aMember but failed to sync. Please try again or contact support.`);
+            }
         }
 
         if (user.status === 'blocked') {
