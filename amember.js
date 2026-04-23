@@ -149,11 +149,17 @@ function verifyPhpass(password, hash) {
 }
 
 async function syncAmemberUsers() {
-    if (process.env.AMEMBER_ENABLE !== 'true' || !pool) return [];
+    if (process.env.AMEMBER_ENABLE !== 'true') {
+        throw new Error('aMember integration is disabled in .env (AMEMBER_ENABLE=false)');
+    }
+    if (!pool) {
+        throw new Error('aMember database pool not initialized. Check your database credentials in .env');
+    }
 
     try {
         const prefix = amemberConfig.prefix;
-        // Fetch all users with their password hash + whether they have active access
+        console.log(`[aMember Sync] Executing sync query on ${amemberConfig.database} with prefix ${prefix}...`);
+        
         const [users] = await pool.execute(
             `SELECT u.user_id, u.login, u.email, u.pass, u.name_f, u.name_l,
              (SELECT COUNT(*) FROM ${prefix}access a 
@@ -162,10 +168,12 @@ async function syncAmemberUsers() {
              FROM ${prefix}user u
              ORDER BY u.user_id ASC`
         );
+        
+        console.log(`[aMember Sync] Query successful, found ${users.length} users.`);
         return users;
     } catch (e) {
-        console.error('[aMember Sync] Error fetching users for sync:', e.message);
-        return [];
+        console.error('[aMember Sync] Database Query Error:', e.message);
+        throw new Error(`aMember Database Error: ${e.message}`);
     }
 }
 
