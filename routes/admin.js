@@ -169,6 +169,83 @@ router.get('/amember-users', async (req, res) => {
     } catch(e) { res.status(500).json({ error: 'aMember database error' }); }
 });
 
+// Sync aMember users into Hub DB
+router.post('/sync-amember', async (req, res) => {
+    try {
+        const { syncAmemberUsers } = require('../amember');
+        const bcrypt = require('bcryptjs');
+        const amUsers = await syncAmemberUsers();
+
+        if (!amUsers || amUsers.length === 0) {
+            return res.json({ message: 'No users found in aMember or aMember is disabled.', created: 0, existing: 0 });
+        }
+
+        const service = await get("SELECT id FROM services WHERE slug = 'stealth'");
+        let created = 0, existing = 0, errors = 0;
+
+        for (const amUser of amUsers) {
+            try {
+                const username = amUser.login || amUser.name_f || `user_${amUser.user_id}`;
+                const email = amUser.email;
+                if (!email) continue;
+
+                // Check if user already exists in Hub DB
+                let hubUser = await get('SELECT id FROM users WHERE email = ?', [email]);
+
+                if (!hubUser) {
+                    // New user — insert into Hub DB using aMember password hash directly
+                    const result = await run(
+                        'INSERT INTO users (username, email, password_hash, role, status) VALUES (?, ?, ?, ?, ?)',
+                        [username, email, amUser.pass, 'user', 'active']
+                    );
+                    hubUser = { id: result.lastID };
+                    created++;
+                } else {
+                    // Existing user — update password hash to stay in sync
+                    await run('UPDATE users SET password_hash = ? WHERE id = ?', [amUser.pass, hubUser.id]);
+                    existing++;
+                }
+
+                // Auto-assign to StealthWriter service if not already
+                if (service) {
+                    const existingAssignment = await get(
+                        'SELECT id FROM user_assignments WHERE user_id = ? AND service_id = ?',
+                        [hubUser.id, service.id]
+                    );
+                    if (!existingAssignment) {
+                        // Find first available cookie slot
+                        const cookie = await get('SELECT id FROM cookies WHERE service_id = ? LIMIT 1', [service.id]);
+                        await run(
+                            'INSERT OR IGNORE INTO user_assignments (user_id, service_id, cookie_id) VALUES (?, ?, ?)',
+                            [hubUser.id, service.id, cookie ? cookie.id : null]
+                        );
+                    }
+                }
+            } catch(userErr) {
+                console.error(`[aMember Sync] Error processing user ${amUser.email}:`, userErr.message);
+                errors++;
+            }
+        }
+
+        console.log(`[aMember Sync] Complete: ${created} created, ${existing} updated, ${errors} errors`);
+
+        // Notify all admins in real-time
+        const io = req.app.get('io');
+        if (io) io.to('admins').emit('sync_complete', { created, existing });
+
+        res.json({
+            message: `Sync complete! ${created} new users imported, ${existing} existing users updated.`,
+            created,
+            existing,
+            errors,
+            total: amUsers.length
+        });
+    } catch(e) {
+        console.error('[aMember Sync] Fatal Error:', e);
+        res.status(500).json({ error: 'aMember sync failed: ' + e.message });
+    }
+});
+
 
 // Create User (Manual)
 router.post('/users', async (req, res) => {

@@ -106,7 +106,14 @@
 
         <!-- USERS TAB -->
         <div id="view-users" class="tab-pane">
-            <div class="col-header"><h2>User Pool Management</h2><button onclick="openUserModal()" style="width:auto;">Add New Student</button></div>
+            <div class="col-header">
+                <h2>User Pool Management</h2>
+                <div style="display:flex; gap:0.75rem; align-items:center;">
+                    <button id="sync-btn" onclick="syncAmember()" style="width:auto; background: linear-gradient(135deg, #6366f1, #a855f7); display:flex; align-items:center; gap:6px;">🔄 Sync from aMember</button>
+                    <button onclick="openUserModal()" style="width:auto;">Add New Student</button>
+                </div>
+            </div>
+            <div id="sync-result" style="display:none; padding: 0.75rem 1rem; border-radius:8px; font-size:0.85rem; margin-bottom:1rem;"></div>
             <div class="card" style="padding:0; overflow:hidden;">
                 <div style="padding: 1rem; border-bottom: 1px solid var(--border-color); display:flex; gap:1rem;">
                     <input type="text" id="user-search" placeholder="Search students..." oninput="render()">
@@ -444,6 +451,44 @@
         document.getElementById('user-form').onsubmit = async (e) => { e.preventDefault(); const id = document.getElementById('edit-user-id').value; const payload = { username: document.getElementById('user-name').value, email: document.getElementById('user-email').value, password: document.getElementById('user-pass').value || undefined }; const method = id ? 'PUT' : 'POST', url = id ? `/hub/api/admin/users/${id}` : '/hub/api/admin/users'; const res = await fetch(url, { method, headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) }); if (res.ok) { showAlert('Saved'); closeUserModal(); loadData(); } };
         async function toggleBlock(id, s) { await fetch(`/hub/api/admin/users/${id}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({status:s==='active'?'blocked':'active'}) }); loadData(); }
         async function forceReload() { socket.emit('admin_signal', { type:'global_update' }); showAlert('Sent'); }
+
+        async function syncAmember() {
+            const btn = document.getElementById('sync-btn');
+            const resultEl = document.getElementById('sync-result');
+            btn.disabled = true;
+            btn.innerHTML = '⏳ Syncing...';
+            resultEl.style.display = 'none';
+            try {
+                const res = await fetch('/hub/api/admin/sync-amember', { method: 'POST' });
+                const data = await res.json();
+                if (res.ok) {
+                    resultEl.style.display = 'block';
+                    resultEl.style.background = 'rgba(16,185,129,0.1)';
+                    resultEl.style.border = '1px solid rgba(16,185,129,0.3)';
+                    resultEl.style.color = '#10b981';
+                    resultEl.innerHTML = `✅ ${data.message} (${data.total} total in aMember)`;
+                    showAlert(data.message);
+                    loadData();
+                } else {
+                    resultEl.style.display = 'block';
+                    resultEl.style.background = 'rgba(248,113,113,0.1)';
+                    resultEl.style.border = '1px solid rgba(248,113,113,0.3)';
+                    resultEl.style.color = '#f87171';
+                    resultEl.innerHTML = `❌ ${data.error}`;
+                    showAlert(data.error, 'error');
+                }
+            } catch(e) {
+                showAlert('Sync request failed: ' + e.message, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '🔄 Sync from aMember';
+            }
+        }
+
+        socket.on('sync_complete', (data) => {
+            showAlert(`aMember Sync: ${data.created} new, ${data.existing} updated`);
+            loadData();
+        });
         async function clearAllAssignments() { if(confirm('Clear all?')) { await fetch('/hub/api/admin/system/clear-assignments', {method:'POST'}); loadData(); } }
         document.getElementById('cookie-form').onsubmit = async (e) => { e.preventDefault(); const payload = { service_id: parseInt(document.getElementById('cookie-service-id').value), name: document.getElementById('cookie-name').value, data: document.getElementById('cookie-data').value }; await fetch('/hub/api/admin/cookies', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) }); e.target.reset(); loadData(); };
         function editSlot(id) { const s = slots.find(x => x.id === id); document.getElementById('edit-slot-id').value = s.id; document.getElementById('edit-slot-name').value = s.name; document.getElementById('edit-slot-service-id').value = s.service_id; document.getElementById('edit-slot-data').value = s.data; document.getElementById('slot-modal').style.display='flex'; }

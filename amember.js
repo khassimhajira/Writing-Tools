@@ -148,4 +148,25 @@ function verifyPhpass(password, hash) {
     return newHash === hash;
 }
 
-module.exports = { checkAmemberAuth, getAmemberUsers };
+async function syncAmemberUsers() {
+    if (process.env.AMEMBER_ENABLE !== 'true' || !pool) return [];
+
+    try {
+        const prefix = amemberConfig.prefix;
+        // Fetch all users with their password hash + whether they have active access
+        const [users] = await pool.execute(
+            `SELECT u.user_id, u.login, u.email, u.pass, u.name_f, u.name_l,
+             (SELECT COUNT(*) FROM ${prefix}access a 
+              WHERE a.user_id = u.user_id 
+              AND (a.expire_date >= CURDATE() OR a.expire_date IS NULL)) as has_access
+             FROM ${prefix}user u
+             ORDER BY u.user_id ASC`
+        );
+        return users;
+    } catch (e) {
+        console.error('[aMember Sync] Error fetching users for sync:', e.message);
+        return [];
+    }
+}
+
+module.exports = { checkAmemberAuth, getAmemberUsers, syncAmemberUsers };
