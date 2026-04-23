@@ -92,9 +92,11 @@ router.post('/login', async (req, res) => {
 });
 
 // Logout
-router.post('/logout', (req, res) => {
+router.get('/logout', (req, res) => {
     res.clearCookie('stealth_hub_token');
-    res.json({ message: 'Logged out' });
+    
+    // Redirect to aMember logout so they are logged out of everything at once
+    res.redirect('https://app.scholargenie.org/login/logout');
 });
 
 // Me (Get current session)

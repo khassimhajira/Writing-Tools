@@ -130,7 +130,7 @@
         socket.on('force_refresh', () => init());
         socket.on('global_reload', () => init());
 
-        document.getElementById('logout-btn').onclick = async () => { await fetch('/hub/api/auth/logout', {method:'POST'}); window.location.href='/'; };
+        document.getElementById('logout-btn').onclick = () => { window.location.href = '/hub/api/auth/logout'; };
         const themeBtn = document.getElementById('theme-btn'), themeCont = document.getElementById('theme-icon-container');
         function updateThemeUI(t) { themeCont.innerHTML = t==='light'?'☾':'☼'; }
         themeBtn.onclick = () => { const cur = document.documentElement.getAttribute('data-theme')||'dark', next = cur==='dark'?'light':'dark'; document.documentElement.setAttribute('data-theme', next); localStorage.setItem('hub-theme', next); updateThemeUI(next); };
