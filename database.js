@@ -2,8 +2,21 @@ require('dotenv').config();
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 const bcrypt = require('bcryptjs');
+const fs = require('fs');
 
-const dbPath = path.resolve(__dirname, process.env.DB_PATH || 'stealth.db');
+// --- PERSISTENT DATA PATH (HOSTINGER FIX) ---
+// We check if the persistent folder exists. If so, we store data there 
+// so it survives GitHub pulls and Hostinger rebuilds.
+let dbPath = process.env.DATABASE_PATH || path.join(__dirname, 'stealth.db');
+const persistentPath = '/home/u124071091/hub_data';
+
+if (fs.existsSync(persistentPath)) {
+    dbPath = path.join(persistentPath, 'stealth.db');
+    console.log('[Database] Using persistent storage at:', dbPath);
+} else {
+    console.log('[Database] Using local storage at:', dbPath);
+}
+
 const db = new sqlite3.Database(dbPath, (err) => {
     if (err) {
         console.error('Error opening database', err);
