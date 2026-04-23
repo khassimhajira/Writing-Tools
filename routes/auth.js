@@ -120,26 +120,35 @@ router.get('/me', async (req, res) => {
     }
 });
 
-// Get User's Services (for Dashboard)
+// List User Services
 router.get('/services', async (req, res) => {
     const token = req.cookies.stealth_hub_token;
     if (!token) return res.status(401).json({ error: 'Not authenticated' });
-
     try {
         const verified = jwt.verify(token, JWT_SECRET);
-        const { query } = require('../database');
-        
-        const services = await query(`
-            SELECT s.name, s.slug, s.icon_svg, s.text_svg
-            FROM user_assignments a
-            JOIN services s ON a.service_id = s.id
-            WHERE a.user_id = ?
-        `, [verified.id]);
+        const user = await get('SELECT email, role FROM users WHERE id = ?', [verified.id]);
+        if (!user) return res.status(404).json({ error: 'User not found' });
 
-        res.json(services);
+        let services = [];
+        if (user.role === 'admin') {
+            services = await query('SELECT * FROM services');
+        } else {
+            services = await query(`
+                SELECT s.* FROM services s
+                JOIN user_assignments ua ON s.id = ua.service_id
+                WHERE ua.user_id = ? AND ua.cookie_id IS NOT NULL`, [verified.id]);
+        }
+
+        // Add expiry date to each service
+        const servicesWithExpiry = await Promise.all(services.map(async (s) => {
+            const expiry = await getAmemberExpiry(user.email, s.product_id);
+            return { ...s, expiry_date: expiry };
+        }));
+
+        res.json(servicesWithExpiry);
     } catch(e) {
-        console.error('Error fetching user services:', e);
-        res.status(500).json({ error: 'Database error' });
+        console.error('Service fetch error:', e);
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 

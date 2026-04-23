@@ -227,19 +227,30 @@ async function verifyAmemberSession(session_id) {
     }
 }
 
-async function getAmemberExpiry(email) {
+async function getAmemberExpiry(email, productId = null) {
     if (process.env.AMEMBER_ENABLE !== 'true' || !pool) return null;
+
     try {
         const prefix = amemberConfig.prefix;
-        const [rows] = await pool.execute(
-            `SELECT MAX(a.expire_date) as expiry_date
-             FROM ${prefix}user u
-             JOIN ${prefix}access a ON u.user_id = a.user_id
-             WHERE u.email = ? AND a.expire_date >= CURDATE()
-             LIMIT 1`,
+        // 1. Get user ID
+        const [users] = await pool.execute(
+            `SELECT user_id FROM ${prefix}user WHERE email = ? LIMIT 1`,
             [email]
         );
-        return rows[0]?.expiry_date || null;
+        if (users.length === 0) return null;
+        const userId = users[0].user_id;
+
+        // 2. Query expiry
+        let query = `SELECT MAX(expire_date) as latest FROM ${prefix}access WHERE user_id = ?`;
+        let params = [userId];
+
+        if (productId) {
+            query += ` AND product_id = ?`;
+            params.push(productId);
+        }
+
+        const [rows] = await pool.execute(query, params);
+        return rows[0]?.latest || null;
     } catch (e) {
         console.error('[aMember Expiry] Error:', e.message);
         return null;

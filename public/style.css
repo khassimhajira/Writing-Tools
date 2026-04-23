@@ -5,40 +5,38 @@
 }
 
 :root {
-    /* MASTERMIND THEME COLORS (ADAPTED FOR SCHOLARGENIE) */
-    --brand-maroon: #3d0b16;
-    --brand-pink: #7c1a30;
-    --brand-vibrant: #e91e63;
-    --brand-blue: #0070f3; /* Keeping user's blue for accents */
+    /* PREMIUM NAVY BLUE THEME */
+    --brand-navy: #001f4d;
+    --brand-blue: #0070f3;
+    --brand-accent: #0059b3;
+    --brand-vibrant: #0070f3; /* Replaced red with blue */
     
-    --bg-color: #f8f9fa; /* Off-white background */
-    --sidebar-gradient: linear-gradient(180deg, #110b10 0%, #1a0a10 100%);
+    --bg-color: #f0f2f5; /* Slightly grayer off-white for better contrast */
+    --sidebar-gradient: linear-gradient(180deg, #001f4d 0%, #00122d 100%);
     --card-bg: #ffffff;
-    --card-bg-dark: rgba(0, 0, 0, 0.4);
     
-    --text-primary: #1a1a1a;
-    --text-secondary: #6b7280;
+    --text-primary: #0f172a;
+    --text-secondary: #64748b;
     --text-white: #ffffff;
     
     --border-color: rgba(0, 0, 0, 0.05);
-    --border-color-white: rgba(255, 255, 255, 0.1);
     
-    --shadow-soft: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-    --shadow-large: 0 20px 50px rgba(0, 0, 0, 0.1);
-    --shadow-sidebar: 0 20px 50px rgba(0, 0, 0, 0.5);
+    --shadow-soft: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
+    --shadow-large: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+    --shadow-sidebar: 0 10px 30px rgba(0, 31, 77, 0.3);
     
-    --sidebar-width: 280px;
-    --header-height: 80px;
-    --radius-xl: 32px;
-    --radius-lg: 24px;
-    --radius-md: 20px;
+    --sidebar-width: 260px;
+    --header-height: 70px;
+    --radius-xl: 24px;
+    --radius-lg: 16px;
+    --radius-md: 12px;
 }
 
 [data-theme="dark"] {
     --bg-color: #0b0e14;
     --text-primary: #f3f4f6;
     --text-secondary: #9ca3af;
-    --card-bg: rgba(22, 27, 34, 0.8);
+    --card-bg: #161b22;
     --border-color: rgba(255, 255, 255, 0.1);
 }
 
@@ -46,13 +44,14 @@
     margin: 0;
     padding: 0;
     box-sizing: border-box;
-    font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
 body {
     background-color: var(--bg-color);
     color: var(--text-primary);
     min-height: 100vh;
+    font-size: 14px; /* Standard smaller font size */
     transition: all 0.3s ease;
 }
 
@@ -234,7 +233,7 @@ header {
     border-radius: var(--radius-xl);
     display: flex;
     flex-direction: column;
-    padding: 32px 24px;
+    padding: 24px 20px;
     height: calc(100vh - 48px);
     position: sticky;
     top: 24px;
@@ -245,39 +244,41 @@ header {
 .sidebar-logo {
     display: flex;
     align-items: center;
-    gap: 12px;
-    margin-bottom: 40px;
+    gap: 10px;
+    margin-bottom: 32px;
 }
 
 .sidebar-logo img {
-    height: 36px;
+    height: 30px;
     width: auto;
 }
 
 .sidebar-logo span {
     color: var(--text-white);
     font-weight: 800;
-    font-size: 1.25rem;
+    font-size: 1.1rem;
     letter-spacing: -0.02em;
 }
 
 .sidebar-nav {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 8px;
     flex: 1;
 }
 
 .nav-link {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 14px 20px;
+    gap: 10px;
+    padding: 10px 16px;
     color: rgba(255, 255, 255, 0.6);
     text-decoration: none;
     border-radius: var(--radius-md);
     transition: all 0.3s ease;
     font-weight: 600;
+    font-size: 0.9rem;
+    cursor: pointer;
 }
 
 .nav-link:hover {
@@ -286,9 +287,9 @@ header {
 }
 
 .nav-link.active {
-    background: linear-gradient(90deg, var(--brand-vibrant), #d81b60);
+    background: var(--brand-blue);
     color: white !important;
-    box-shadow: 0 8px 20px rgba(233, 30, 99, 0.3);
+    box-shadow: 0 4px 12px rgba(0, 112, 243, 0.3);
 }
 
 .sidebar-footer {
@@ -320,9 +321,9 @@ header {
 }
 
 .greeting-card {
-    background: linear-gradient(135deg, var(--brand-maroon) 0%, var(--brand-pink) 100%);
+    background: linear-gradient(135deg, var(--brand-navy) 0%, var(--brand-accent) 100%);
     border-radius: var(--radius-xl);
-    padding: 40px;
+    padding: 30px;
     color: white;
     margin-bottom: 24px;
     display: flex;
@@ -332,14 +333,14 @@ header {
 }
 
 .greeting-text h2 {
-    font-size: 30px;
+    font-size: 24px;
     font-weight: 700;
-    margin-bottom: 8px;
+    margin-bottom: 6px;
 }
 
 .greeting-text p {
     opacity: 0.8;
-    font-size: 1.1rem;
+    font-size: 1rem;
     font-weight: 400;
 }
 
@@ -347,14 +348,14 @@ header {
     background: rgba(0, 0, 0, 0.2);
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
-    padding: 16px 24px;
+    padding: 12px 20px;
     border-radius: var(--radius-md);
     text-align: center;
     border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .time-widget .clock {
-    font-size: 32px;
+    font-size: 26px;
     font-weight: 800;
     display: block;
     line-height: 1;
@@ -362,7 +363,7 @@ header {
 
 .time-widget .date {
     opacity: 0.7;
-    font-size: 0.85rem;
+    font-size: 0.75rem;
     font-weight: 500;
     margin-top: 4px;
     display: block;
@@ -695,56 +696,57 @@ body.portal-open main.container {
     background: var(--card-bg);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-lg);
-    padding: 32px;
+    padding: 20px;
     display: flex;
     flex-direction: column;
     align-items: center;
     text-align: center;
     transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
     box-shadow: var(--shadow-soft);
-    position: relative;
-    overflow: hidden;
 }
 
 .tool-card:hover {
-    transform: translateY(-10px);
+    transform: translateY(-8px);
     box-shadow: var(--shadow-large);
-    border-color: rgba(233, 30, 99, 0.2);
+    border-color: rgba(0, 112, 243, 0.2);
 }
 
 .tool-logo-container {
-    width: 90px;
-    height: 90px;
-    margin-bottom: 24px;
+    width: 70px;
+    height: 70px;
+    margin-bottom: 16px;
     display: flex;
     align-items: center;
     justify-content: center;
     background: #fdfdfd;
     border-radius: var(--radius-md);
-    padding: 16px;
-    box-shadow: inset 0 2px 4px rgba(0,0,0,0.02);
+    padding: 12px;
+}
+
+[data-theme="dark"] .tool-logo-container {
+    background: #0b0e14;
 }
 
 .tool-card h3 {
-    font-size: 1.25rem;
+    font-size: 1.1rem;
     font-weight: 700;
-    margin-bottom: 12px;
+    margin-bottom: 8px;
     color: var(--text-primary);
 }
 
 .tool-card p {
     color: var(--text-secondary);
-    font-size: 0.95rem;
-    line-height: 1.6;
-    margin-bottom: 32px;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    margin-bottom: 24px;
     flex-grow: 1;
 }
 
 .tool-action-btn {
     width: 100%;
-    padding: 14px;
+    padding: 10px;
     border-radius: var(--radius-md);
-    font-size: 1rem;
+    font-size: 0.9rem;
     font-weight: 600;
     background: #1a1a1a;
     color: white;
@@ -754,8 +756,8 @@ body.portal-open main.container {
 }
 
 .tool-card:hover .tool-action-btn {
-    background: var(--brand-vibrant);
-    box-shadow: 0 4px 15px rgba(233, 30, 99, 0.3);
+    background: var(--brand-blue);
+    box-shadow: 0 4px 15px rgba(0, 112, 243, 0.3);
 }
 
 .tool-card.locked {

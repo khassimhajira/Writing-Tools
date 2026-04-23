@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ScholarGenie | Dashboard</title>
+    <title>StealthWriter Hub | Dashboard</title>
     <link rel="stylesheet" href="style.css">
     <link rel="icon" href="FAVICON.png">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -12,52 +12,52 @@
     <!-- MOBILE HEADER -->
     <div class="mobile-header">
         <div style="display:flex; align-items:center; gap:10px;">
-            <img src="LOGO.png" alt="ScholarGenie" style="height: 28px;">
-            <span style="color:white; font-weight:800; font-size:1.1rem;">ScholarGenie</span>
+            <img src="LOGO.png" alt="StealthWriter" style="height: 24px;">
+            <span style="color:white; font-weight:800; font-size:1rem;">StealthWriter Hub</span>
         </div>
-        <button onclick="toggleSidebar()" style="background:transparent; border:none; color:white; font-size:1.8rem;">☰</button>
+        <button onclick="toggleSidebar()" style="background:transparent; border:none; color:white; font-size:1.5rem;">☰</button>
     </div>
 
     <!-- SIDEBAR -->
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-logo">
-            <img src="LOGO.png" alt="ScholarGenie">
-            <span>ScholarGenie</span>
+            <img src="LOGO.png" alt="StealthWriter">
+            <span>StealthWriter Hub</span>
         </div>
         
         <nav class="sidebar-nav">
-            <a href="/dashboard" class="nav-link active">
-                <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg>
+            <div onclick="switchSection('workspace')" class="nav-link active" id="nav-workspace">
+                <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg>
                 Dashboard
-            </a>
-            <a href="#" class="nav-link">
-                <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 11-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 011-1V4z"></path></svg>
+            </div>
+            <div onclick="switchSection('workspace')" class="nav-link" id="nav-tools">
+                <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 11-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 011-1V4z"></path></svg>
                 Tools
-            </a>
-            <a href="#" class="nav-link">
-                <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
+            </div>
+            <div onclick="switchSection('account')" class="nav-link" id="nav-account">
+                <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
                 Account
-            </a>
+            </div>
             <a href="/admin" id="admin-link" class="nav-link" style="display:none;">
-                <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"></path></svg>
+                <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"></path></svg>
                 Admin
             </a>
         </nav>
 
         <div class="sidebar-footer">
-            <div id="user-profile-section" style="display:flex; align-items:center; gap:12px; margin-bottom:24px; padding:0 8px;">
-                <div id="user-avatar" style="width:44px; height:44px; border-radius:12px; background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.1); display:flex; align-items:center; justify-content:center; font-weight:800; color:white; font-size:1.1rem;">?</div>
+            <div id="user-profile-section" style="display:flex; align-items:center; gap:10px; margin-bottom:20px; padding:0 4px;">
+                <div id="user-avatar" style="width:36px; height:36px; border-radius:10px; background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.1); display:flex; align-items:center; justify-content:center; font-weight:800; color:white; font-size:0.9rem;">?</div>
                 <div style="overflow:hidden;">
-                    <div id="user-name" style="font-weight:700; color:white; white-space:nowrap; text-overflow:ellipsis; overflow:hidden;">User</div>
-                    <div id="user-email" style="font-size:0.75rem; color:rgba(255,255,255,0.5); white-space:nowrap; text-overflow:ellipsis; overflow:hidden;">email@example.com</div>
+                    <div id="user-name" style="font-weight:700; color:white; white-space:nowrap; text-overflow:ellipsis; overflow:hidden; font-size:0.9rem;">User</div>
+                    <div id="user-email" style="font-size:0.7rem; color:rgba(255,255,255,0.5); white-space:nowrap; text-overflow:ellipsis; overflow:hidden;">email@example.com</div>
                 </div>
             </div>
             
-            <div style="display:flex; gap:10px;">
-                <button class="theme-toggle" id="theme-btn" style="flex:1; background:rgba(255,255,255,0.05); border:none; color:white; padding:12px; border-radius:12px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:8px; font-weight:600; font-size:0.85rem;">
+            <div style="display:flex; gap:8px;">
+                <button class="theme-toggle" id="theme-btn" style="flex:1; background:rgba(255,255,255,0.05); border:none; color:white; padding:10px; border-radius:10px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px; font-weight:600; font-size:0.8rem;">
                     <span id="theme-icon">☼</span> <span id="theme-text">Light</span>
                 </button>
-                <button id="logout-btn" style="flex:1; background:rgba(244, 67, 54, 0.1); border:none; color:#f44336; padding:12px; border-radius:12px; cursor:pointer; font-weight:600; font-size:0.85rem;">Logout</button>
+                <button id="logout-btn" style="flex:1; background:rgba(244, 67, 54, 0.1); border:none; color:#f44336; padding:10px; border-radius:10px; cursor:pointer; font-weight:600; font-size:0.8rem;">Logout</button>
             </div>
         </div>
     </aside>
@@ -65,68 +65,69 @@
     <!-- MAIN WRAPPER -->
     <div class="main-wrapper">
         <header class="top-nav">
-            <div style="font-weight:700; font-size:1.1rem; color: var(--text-secondary);">Overview</div>
-            <div id="presence-pill" style="font-size:0.8rem; color:#10b981; background:rgba(16,185,129,0.1); padding:6px 16px; border-radius:100px; display:flex; align-items:center; gap:8px; font-weight:700;">
-                <span style="width:8px; height:8px; background:#10b981; border-radius:50%; box-shadow: 0 0 8px #10b981;"></span>
-                Systems Operational
-            </div>
+            <div id="section-title" style="font-weight:700; font-size:1rem; color: var(--text-secondary);">Overview</div>
         </header>
 
         <main class="dashboard-content">
-            <!-- WELCOME BANNER -->
-            <div class="greeting-card">
-                <div class="greeting-text">
-                    <h2 id="greeting-title">Good Morning, User! 👋</h2>
-                    <p>Unlock the power of premium tools and elevate your workflow.</p>
-                </div>
-                <div class="time-widget">
-                    <span class="clock" id="clock">00:00</span>
-                    <span class="date" id="date">Thursday, April 23</span>
-                </div>
-            </div>
-
-            <!-- INFO GRID -->
-            <div class="info-grid" style="margin-bottom: 32px;">
-                <!-- SUBSCRIPTION CARD -->
-                <div class="expiry-card">
-                    <div class="expiry-icon">📅</div>
-                    <div class="expiry-info">
-                        <h4>SUBSCRIPTION EXPIRES</h4>
-                        <div class="date-val" id="expiry-val">Loading...</div>
+            <!-- WORKSPACE SECTION -->
+            <div id="section-workspace">
+                <!-- WELCOME BANNER -->
+                <div class="greeting-card">
+                    <div class="greeting-text">
+                        <h2 id="greeting-title">Good Morning, User! 👋</h2>
+                        <p>Welcome to your premium writing workspace.</p>
+                    </div>
+                    <div class="time-widget">
+                        <span class="clock" id="clock">00:00</span>
+                        <span class="date" id="date">Thursday, April 23</span>
                     </div>
                 </div>
-                <!-- STATUS CARD -->
-                <div class="expiry-card">
-                    <div class="expiry-icon" style="background:rgba(59, 130, 246, 0.1); color:#3b82f6;">🛡️</div>
-                    <div class="expiry-info">
-                        <h4>ACCOUNT STATUS</h4>
-                        <div class="date-val" id="role-val" style="color:#3b82f6;">Premium Active</div>
+
+                <!-- TOOLS GRID -->
+                <div id="ready-view">
+                    <div style="margin-bottom: 20px;">
+                        <h3 style="font-size: 1.25rem; font-weight: 800; letter-spacing: -0.02em;">My Tools</h3>
+                    </div>
+                    <div id="services-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px;"></div>
+                </div>
+
+                <!-- LOADING VIEW -->
+                <div id="loading-view" style="display:flex; justify-content:center; align-items:center; height:200px;">
+                    <div style="text-align:center;">
+                        <div style="width:40px; height:40px; border:3px solid var(--border-color); border-top-color:var(--brand-blue); border-radius:50%; animation: spin 1s linear infinite; margin: 0 auto 1rem;"></div>
+                        <p style="color:var(--text-secondary); font-size:0.9rem;">Loading tools...</p>
                     </div>
                 </div>
-            </div>
+                <style>@keyframes spin { to { transform: rotate(360deg); } }</style>
 
-            <!-- TOOLS GRID -->
-            <div id="ready-view">
-                <div style="margin-bottom: 24px;">
-                    <h3 style="font-size: 1.5rem; font-weight: 800; letter-spacing: -0.02em;">My Workspace</h3>
-                </div>
-                <div id="services-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 24px;"></div>
-            </div>
-
-            <!-- LOADING VIEW -->
-            <div id="loading-view" style="display:flex; justify-content:center; align-items:center; height:300px;">
-                <div style="text-align:center;">
-                    <div style="width:50px; height:50px; border:4px solid var(--border-color); border-top-color:var(--brand-vibrant); border-radius:50%; animation: spin 1s linear infinite; margin: 0 auto 1rem;"></div>
-                    <p style="color:var(--text-secondary); font-weight:500;">Loading your tools...</p>
+                <!-- NO ACCESS VIEW -->
+                <div id="no-access-view" style="display:none; text-align:center; padding: 4rem 1rem;">
+                    <div style="font-size: 3rem; margin-bottom: 1.5rem;">🛡️</div>
+                    <h2 style="margin-bottom:0.5rem; font-weight:800; font-size:1.5rem;">Access Pending</h2>
+                    <p style="color:var(--text-secondary); max-width:400px; margin: 0 auto;">You haven't been assigned any premium tools yet. Please contact support.</p>
                 </div>
             </div>
-            <style>@keyframes spin { to { transform: rotate(360deg); } }</style>
 
-            <!-- NO ACCESS VIEW -->
-            <div id="no-access-view" style="display:none; text-align:center; padding: 4rem 1rem;">
-                <div style="font-size: 4rem; margin-bottom: 2rem;">🛡️</div>
-                <h2 style="margin-bottom:1rem; font-weight:800;">Access Awaiting Activation</h2>
-                <p style="color:var(--text-secondary); max-width:500px; margin: 0 auto 2rem;">Your account is ready, but you haven't been assigned any premium tools yet.</p>
+            <!-- ACCOUNT SECTION -->
+            <div id="section-account" style="display:none;">
+                <div class="card" style="padding: 30px; max-width: 600px;">
+                    <h3 style="margin-bottom: 20px; font-size: 1.5rem;">Account Settings</h3>
+                    <div style="display:grid; gap:15px;">
+                        <div style="padding:15px; border-radius:12px; background:var(--bg-color); border:1px solid var(--border-color);">
+                            <div style="font-size:0.75rem; color:var(--text-secondary); text-transform:uppercase; font-weight:700; margin-bottom:4px;">Username</div>
+                            <div id="acc-username" style="font-weight:600; font-size:1.1rem;">-</div>
+                        </div>
+                        <div style="padding:15px; border-radius:12px; background:var(--bg-color); border:1px solid var(--border-color);">
+                            <div style="font-size:0.75rem; color:var(--text-secondary); text-transform:uppercase; font-weight:700; margin-bottom:4px;">Email Address</div>
+                            <div id="acc-email" style="font-weight:600; font-size:1.1rem;">-</div>
+                        </div>
+                        <div style="padding:15px; border-radius:12px; background:var(--bg-color); border:1px solid var(--border-color);">
+                            <div style="font-size:0.75rem; color:var(--text-secondary); text-transform:uppercase; font-weight:700; margin-bottom:4px;">Role</div>
+                            <div id="acc-role" style="font-weight:600; font-size:1.1rem;">Premium Member</div>
+                        </div>
+                    </div>
+                    <button onclick="window.location.href='/hub/api/auth/logout'" style="margin-top:30px; background:#f44336; color:white; border:none; padding:12px 24px; border-radius:10px; font-weight:700; cursor:pointer;">Sign Out Everywhere</button>
+                </div>
             </div>
         </main>
     </div>
@@ -134,8 +135,8 @@
     <!-- PORTAL OVERLAY -->
     <iframe id="portal-frame" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; border:none; background:white; z-index:10000;"></iframe>
     <button id="portal-exit" onclick="exitPortal()">
-        <svg style="width:18px;height:18px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"></path></svg>
-        Back to Dashboard
+        <svg style="width:16px;height:16px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"></path></svg>
+        Back to Hub
     </button>
 
     <script src="/socket.io/socket.io.js"></script>
@@ -164,6 +165,17 @@
         setInterval(updateClock, 60000);
         updateClock();
 
+        function switchSection(sec) {
+            document.getElementById('section-workspace').style.display = sec === 'workspace' ? 'block' : 'none';
+            document.getElementById('section-account').style.display = sec === 'account' ? 'block' : 'none';
+            
+            document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+            document.getElementById('nav-' + (sec === 'workspace' ? 'workspace' : 'account')).classList.add('active');
+            
+            document.getElementById('section-title').textContent = sec.charAt(0).toUpperCase() + sec.slice(1);
+            if (window.innerWidth < 1100) toggleSidebar();
+        }
+
         async function init() {
             try {
                 const userRes = await fetch('/hub/api/auth/me');
@@ -174,27 +186,15 @@
                 document.getElementById('user-email').textContent = currentUser.email;
                 document.getElementById('user-avatar').textContent = currentUser.username.substring(0, 1).toUpperCase();
                 
+                document.getElementById('acc-username').textContent = currentUser.username;
+                document.getElementById('acc-email').textContent = currentUser.email;
+                document.getElementById('acc-role').textContent = currentUser.role === 'admin' ? 'Administrator' : 'Premium Member';
+
                 if (currentUser.role === 'admin') {
                     document.getElementById('admin-link').style.display = 'flex';
                 }
 
                 updateClock();
-
-                // Fetch Expiry
-                try {
-                    const expRes = await fetch('/hub/api/auth/expiry');
-                    const expData = await expRes.json();
-                    if (expData.expiry_date) {
-                        const date = new Date(expData.expiry_date);
-                        document.getElementById('expiry-val').textContent = date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }).toUpperCase();
-                        document.getElementById('expiry-val').style.color = '#10b981';
-                    } else {
-                        document.getElementById('expiry-val').textContent = 'EXPIRED';
-                        document.getElementById('expiry-val').style.color = '#f44336';
-                    }
-                } catch(e) {
-                    document.getElementById('expiry-val').textContent = 'N/A';
-                }
 
                 const servicesRes = await fetch('/hub/api/auth/services');
                 const services = await servicesRes.json();
@@ -205,20 +205,28 @@
                     document.getElementById('ready-view').style.display = 'block';
                     document.getElementById('no-access-view').style.display = 'none';
                     
-                    document.getElementById('services-grid').innerHTML = services.map(s => `
+                    document.getElementById('services-grid').innerHTML = services.map(s => {
+                        const expDate = s.expiry_date ? new Date(s.expiry_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'No active plan';
+                        const isExpired = s.expiry_date && new Date(s.expiry_date) < new Date();
+                        
+                        return `
                         <div class="tool-card">
                             <div class="tool-logo-container">
                                 ${s.icon_svg ? (
                                     s.icon_svg.trim().startsWith('<svg') || s.icon_svg.trim().startsWith('<div') 
                                     ? s.icon_svg 
                                     : `<img src="${s.icon_svg}" alt="" style="height:100%; width:100%; object-fit:contain;">`
-                                ) : `<div style="font-size:2rem; font-weight:800;">${s.name.substring(0, 2).toUpperCase()}</div>`}
+                                ) : `<div style="font-size:1.5rem; font-weight:800; color:var(--brand-blue);">${s.name.substring(0, 2).toUpperCase()}</div>`}
                             </div>
                             <h3>${s.name}</h3>
-                            <p>Unlock elite premium features for ${s.name} with our secure proxy tunnel.</p>
+                            <div style="font-size:0.7rem; font-weight:700; color:var(--text-secondary); margin-bottom:12px; display:flex; align-items:center; gap:5px; justify-content:center;">
+                                <span style="width:6px; height:6px; background:${isExpired ? '#f44336' : '#10b981'}; border-radius:50%;"></span>
+                                EXPIRES: <span style="color:${isExpired ? '#f44336' : 'var(--text-primary)'}">${expDate.toUpperCase()}</span>
+                            </div>
+                            <p>Secure premium access to ${s.name} features.</p>
                             <button onclick="launchPortal('${s.slug}')" class="tool-action-btn">Launch Workspace</button>
                         </div>
-                    `).join('');
+                    `}).join('');
                 } else {
                     document.getElementById('ready-view').style.display = 'none';
                     document.getElementById('no-access-view').style.display = 'block';
