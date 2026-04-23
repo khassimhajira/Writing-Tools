@@ -197,4 +197,34 @@ async function verifyAmemberUser(identifier) {
     }
 }
 
-module.exports = { checkAmemberAuth, getAmemberUsers, syncAmemberUsers, verifyAmemberUser };
+async function verifyAmemberSession(session_id) {
+    if (process.env.AMEMBER_ENABLE !== 'true' || !pool || !session_id) return null;
+
+    try {
+        const prefix = amemberConfig.prefix;
+        // 1. Find the session in aMember DB
+        const [sessions] = await pool.execute(
+            `SELECT user_id FROM ${prefix}session WHERE session_id = ? LIMIT 1`,
+            [session_id]
+        );
+
+        if (sessions.length === 0) return null;
+        const userId = sessions[0].user_id;
+
+        // 2. Get user info and check active access
+        const [users] = await pool.execute(
+            `SELECT u.email, u.login FROM ${prefix}user u
+             JOIN ${prefix}access a ON u.user_id = a.user_id
+             WHERE u.user_id = ? AND (a.expire_date >= CURDATE() OR a.expire_date IS NULL)
+             LIMIT 1`,
+            [userId]
+        );
+
+        return users.length > 0 ? users[0] : null;
+    } catch (e) {
+        console.error('[aMember Session Verify] Error:', e.message);
+        return null;
+    }
+}
+
+module.exports = { checkAmemberAuth, getAmemberUsers, syncAmemberUsers, verifyAmemberUser, verifyAmemberSession };

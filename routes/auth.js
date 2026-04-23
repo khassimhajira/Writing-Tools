@@ -145,31 +145,46 @@ router.get('/services', async (req, res) => {
 // Silent Login from aMember Pro (SSO)
 router.get('/am-login', async (req, res) => {
     const { email, username } = req.query;
+    const amemberSessionId = req.cookies.amember_nr; // aMember Pro standard session cookie
     
-    // BREAK REDIRECT LOOP: If no email/username, show error instead of redirecting
-    if (!email && !username) {
-        return res.status(400).send('Missing account identifier. aMember must send an email or username.');
-    }
+    let identifier = email || username;
+    let amUser = null;
 
     try {
-        const identifier = email || username;
-        console.log(`[SSO] Attempting login for: ${identifier}`);
+        const { verifyAmemberSession, verifyAmemberUser } = require('../amember');
 
-        // 1. Try to find user in Hub DB
-        let user = await get('SELECT id, role, status FROM users WHERE email = ? OR username = ?', [identifier, identifier]);
-        
-        // 2. If not found in Hub, check aMember directly
-        const { verifyAmemberUser } = require('../amember');
-        const hasAccess = await verifyAmemberUser(identifier);
-
-        if (!hasAccess) {
-            return res.status(403).send(`Access Denied: No active subscription found for "${identifier}" in aMember Pro.`);
+        // 1. Try Session-based Login (Most seamless)
+        if (amemberSessionId) {
+            console.log(`[SSO] Checking aMember Session: ${amemberSessionId}`);
+            amUser = await verifyAmemberSession(amemberSessionId);
+            if (amUser) {
+                identifier = amUser.email;
+                console.log(`[SSO] Valid session found for: ${identifier}`);
+            }
         }
 
-        // 3. If they have access in aMember but aren't in Hub yet, we need to sync
+        // 2. Fallback to Email/Username based Login (if no session found)
+        if (!amUser && !identifier) {
+            return res.status(401).send('Access Denied: You are not logged in to aMember Pro, or your session has expired.');
+        }
+
+        console.log(`[SSO] Final login attempt for: ${identifier}`);
+
+        // 3. Find user in Hub DB
+        let user = await get('SELECT id, role, status FROM users WHERE email = ? OR username = ?', [identifier, identifier]);
+        
+        // 4. Verify access in aMember (if not already verified by session)
+        if (!amUser) {
+            const hasAccess = await verifyAmemberUser(identifier);
+            if (!hasAccess) {
+                return res.status(403).send(`Access Denied: No active subscription found for "${identifier}" in aMember Pro.`);
+            }
+        }
+
+        // 5. If they have access but aren't in Hub yet
         if (!user) {
-            console.log(`[SSO] User ${identifier} has access but is missing from Hub. Running emergency sync...`);
-            // Here we could trigger a specific sync, but for now we'll ask admin to sync first
+            console.log(`[SSO] User ${identifier} has access but is missing from Hub. Syncing...`);
+            // You can also trigger an auto-sync here
             return res.status(401).send(`User "${identifier}" found in aMember but not synced to Hub. Please click "Sync" in Admin Panel once.`);
         }
 
@@ -177,7 +192,7 @@ router.get('/am-login', async (req, res) => {
             return res.status(403).send('Your account is suspended.');
         }
 
-        // 4. Generate Token & Log In
+        // 6. Log In
         const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
         res.cookie('stealth_hub_token', token, { 
             httpOnly: true, 
@@ -185,7 +200,7 @@ router.get('/am-login', async (req, res) => {
             maxAge: 7 * 24 * 60 * 60 * 1000 
         });
 
-        console.log(`[SSO] User ${identifier} successfully logged in.`);
+        console.log(`[SSO] User ${identifier} logged in.`);
         res.redirect('/dashboard');
     } catch(e) {
         console.error('[SSO] Fatal Error:', e);
