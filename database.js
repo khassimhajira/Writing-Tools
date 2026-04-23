@@ -108,8 +108,7 @@ function runMigrations() {
         '[data-sidebar="footer"]',
         '.intercom-launcher',
         '#intercom-container',
-        /* Hide entire account page content if navigated to */
-        'main:has(h2)', 
+        /* Hide specific account page elements instead of the whole main area */
         '.breadcrumb',
         '.flex.items-center.gap-4:has(.rounded-full)'
     ].join(',') + ' { display: none !important; visibility: hidden !important; opacity: 0 !important; }';
