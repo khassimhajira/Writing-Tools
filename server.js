@@ -58,9 +58,16 @@ app.use(cookieParser());
 // Static Files & Pages
 app.get('/', (req, res) => res.redirect('/dashboard'));
 
+// AUTH GATEKEEPER: All dashboard traffic must be authenticated via aMember
 app.get('/dashboard', (req, res) => {
     const token = req.cookies.stealth_hub_token;
-    if (!token) return res.redirect('https://app.scholargenie.org/login');
+    
+    // If no token, redirect to aMember Login, but tell it to come back to the "Access Tools" page
+    if (!token) {
+        // This URL sends them to login and then takes them straight to your new button page!
+        const amLoginUrl = 'https://app.scholargenie.org/login?amember_redirect_url=https://app.scholargenie.org/content/p/id/1/';
+        return res.redirect(amLoginUrl);
+    }
     
     try {
         jwt.verify(token, JWT_SECRET);
