@@ -480,6 +480,73 @@ server.on('upgrade', async (req, socket, head) => {
 });
 
 
+// --- AUTOMATED BACKGROUND SYNC ---
+// Runs every 10 minutes to keep Hub Admin in sync with aMember Pro
+async function autoSyncAmember() {
+    if (process.env.AMEMBER_ENABLE !== 'true') return;
+    
+    console.log('[Background Sync] Starting scheduled sync with aMember...');
+    try {
+        const { syncAmemberUsers } = require('./amember');
+        const amUsers = await syncAmemberUsers();
+        if (!amUsers || amUsers.length === 0) return;
+
+        const service = await get("SELECT id FROM services WHERE slug = 'stealth'");
+        
+        // 1. Update/Add Users
+        for (const amUser of amUsers) {
+            const email = amUser.email;
+            if (!email) continue;
+            let hubUser = await get('SELECT id FROM users WHERE email = ?', [email]);
+
+            if (!hubUser) {
+                const username = amUser.login || amUser.name_f || `user_${amUser.user_id}`;
+                const result = await run(
+                    'INSERT INTO users (username, email, password_hash, role, status) VALUES (?, ?, ?, ?, ?)',
+                    [username, email, amUser.pass, 'user', 'active']
+                );
+                hubUser = { id: result.lastID };
+            } else {
+                await run('UPDATE users SET password_hash = ? WHERE id = ?', [amUser.pass, hubUser.id]);
+            }
+
+            // Auto-assign StealthWriter
+            if (service && hubUser.id) {
+                const existingAssignment = await get('SELECT id FROM user_assignments WHERE user_id = ? AND service_id = ?', [hubUser.id, service.id]);
+                if (!existingAssignment) {
+                    const cookie = await get('SELECT id FROM cookies WHERE service_id = ? LIMIT 1', [service.id]);
+                    await run('INSERT OR IGNORE INTO user_assignments (user_id, service_id, cookie_id) VALUES (?, ?, ?)', [hubUser.id, service.id, cookie ? cookie.id : null]);
+                }
+            }
+        }
+
+        // 2. Purge Deleted Users
+        const amEmails = amUsers.map(u => u.email).filter(Boolean);
+        const amLogins = amUsers.map(u => u.login).filter(Boolean);
+        const hubUsers = await query('SELECT id, email, username FROM users WHERE role != "admin"');
+        
+        for (const hubUser of hubUsers) {
+            const exists = amEmails.includes(hubUser.email) || amLogins.includes(hubUser.username);
+            if (!exists) {
+                await run('DELETE FROM users WHERE id = ?', [hubUser.id]);
+            }
+        }
+        
+        console.log('[Background Sync] Complete.');
+    } catch (e) {
+        console.error('[Background Sync] Failed:', e.message);
+    }
+}
+
+// Start background sync: Initial run after 10s, then every 10 minutes
+setTimeout(autoSyncAmember, 10000);
+setInterval(autoSyncAmember, 10 * 60 * 1000);
+
+// Error Handling & Graceful Shutdown
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
 proxy.on('error', (err, req, res) => {
     console.error('Proxy Engine Error:', err);
     if (!res.headersSent) {
