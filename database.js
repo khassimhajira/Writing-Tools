@@ -101,17 +101,34 @@ function runMigrations() {
     s.id = 'stealth-hide';
     s.textContent = [
         /* Sidebar account/pricing/settings links */
-        '[data-sidebar="menu"] a[href="/pricing"]',
-        '[data-sidebar="menu"] a[href="/account"]',
-        '[data-sidebar="menu"] a[href="/settings"]',
-        'a[href="/pricing"]',
-        'a[href="/account"]',
-        'a[href="/settings"]',
+        '[data-sidebar="menu"] a[href*="account"]',
+        '[data-sidebar="menu"] a[href*="pricing"]',
+        '[data-sidebar="menu"] a[href*="settings"]',
+        'a[href*="/account"]',
+        'a[href*="/pricing"]',
+        'a[href*="/settings"]',
+        'a[href*="/billing"]',
+        'a[href*="/plan"]',
+        /* Sidebar Section Labels */
+        'div:has(> span:contains("Account"))',
+        'div:has(> span:contains("Account")) + a',
+        'div:has(> h3:contains("Account"))',
+        /* Breadcrumbs and Headers */
+        '.breadcrumb:has(a[href*="account"])',
+        'div:has(> h2:contains("Account"))',
+        'h3:contains("Account")',
+        'h2:contains("Account")',
+        '.text-2xl.font-bold:contains("Account")',
+        /* Account Page Specifics (Name/Email) */
+        'div:has(> p:contains("UsmanGurmeet"))',
+        'p:contains("gurmeet_usman@mentora.uno")',
+        '.flex.items-center.gap-4:has(.rounded-full)',
         /* Avatar / profile buttons */
         'button:has(span[data-slot="avatar"])',
         'button:has(img[data-slot="avatar-image"])',
         'button:has(img[alt="avatar"])',
         'button:has(img[alt="user"])',
+        'button:has(.rounded-full)',
         /* Sidebar footer (usually has account info) */
         'div[data-sidebar="footer"]',
         '[data-sidebar="footer"]',
