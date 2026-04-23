@@ -10,6 +10,7 @@
     --brand-blue: #0070f3; /* Brighter, more vibrant blue for Dark Mode */
     
     --bg-color: #0b0e14;
+    --sidebar-bg: #0b0e14;
     --card-bg: rgba(22, 27, 34, 0.7);
     --text-primary: #ffffff;
     --text-secondary: #8b949e;
@@ -18,21 +19,25 @@
     --border-color: rgba(255, 255, 255, 0.1);
     --input-bg: #161b22;
     --shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    --sidebar-width: 280px;
+    --header-height: 70px;
+    --radius-lg: 24px;
+    --radius-md: 16px;
+    --accent-gradient: linear-gradient(135deg, var(--brand-blue), #60a5fa);
 }
 
 [data-theme="light"] {
     --brand-blue: #0059b3; /* Professional navy blue for Light Mode */
-    --primary-color: #0059b3; /* Explicitly redefine for light mode */
+    --primary-color: #0059b3; 
     --primary-hover: #004d99;
     --bg-color: #f8fafc;
+    --sidebar-bg: #ffffff;
     --card-bg: rgba(255, 255, 255, 0.9);
     --text-primary: #0f172a;
     --text-secondary: #475569;
     --border-color: rgba(0, 0, 0, 0.1);
     --input-bg: #ffffff;
     --shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-    
-    /* Light mode sidebar overrides */
     --brand-navy: #f1f5f9; 
     --nav-hover: rgba(0, 0, 0, 0.05);
 }
@@ -223,36 +228,71 @@ header {
     backdrop-filter: blur(10px);
 }
 
-/* ADMIN DASHBOARD - NEW SIDEBAR ARCHITECTURE */
-.admin-shell {
+/* APP SHELL LAYOUT */
+.app-layout {
     display: flex;
-    flex-direction: row;
     min-height: 100vh;
-    overflow-x: hidden;
+    background-color: var(--bg-color);
 }
 
+.main-wrapper {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.top-nav {
+    height: var(--header-height);
+    padding: 0 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: transparent;
+}
 
 .sidebar {
-    width: 260px;
-    min-width: 260px;
-    background: var(--brand-navy);
+    width: var(--sidebar-width);
+    background: var(--sidebar-bg);
     border-right: 1px solid var(--border-color);
     display: flex;
     flex-direction: column;
-    padding: 1.5rem;
+    padding: 2rem 1.5rem;
+    height: 100vh;
     position: sticky;
     top: 0;
-    height: 100vh;
     z-index: 1000;
-    transition: transform 0.3s, left 0.3s;
+    transition: all 0.3s ease;
 }
 
+[data-theme="dark"] .sidebar {
+    background: #0b0e14;
+}
+
+.sidebar-logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 3rem;
+    padding: 0 0.5rem;
+}
+
+.sidebar-logo img {
+    height: 32px;
+    width: auto;
+}
+
+.sidebar-logo span {
+    font-weight: 800;
+    font-size: 1.1rem;
+    letter-spacing: -0.02em;
+}
 
 .sidebar-nav {
-    margin-top: 2rem;
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
+    flex: 1;
 }
 
 .nav-link {
@@ -268,21 +308,113 @@ header {
     font-weight: 500;
 }
 
-.nav-link:hover, .nav-link.active {
+.nav-link:hover {
     background: var(--nav-hover, rgba(255, 255, 255, 0.05));
     color: var(--text-primary);
 }
 
-
 .nav-link.active {
-    border-left: 4px solid var(--brand-blue);
-    background: rgba(0, 89, 179, 0.1);
+    background: var(--primary-color);
+    color: white !important;
+    box-shadow: 0 4px 12px rgba(0, 112, 243, 0.3);
 }
 
-.main-content {
-    flex: 1;
+/* DASHBOARD COMPONENTS */
+.dashboard-content {
     padding: 2rem;
     max-width: 1400px;
+    width: 100%;
+    margin: 0 auto;
+}
+
+.greeting-card {
+    background: var(--accent-gradient);
+    border-radius: var(--radius-lg);
+    padding: 2.5rem;
+    color: white;
+    margin-bottom: 2rem;
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.greeting-card::after {
+    content: '';
+    position: absolute;
+    top: -50%; right: -10%;
+    width: 300px; height: 300px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 50%;
+}
+
+.greeting-text h2 {
+    font-size: 2rem;
+    font-weight: 800;
+    margin-bottom: 0.5rem;
+}
+
+.greeting-text p {
+    opacity: 0.9;
+    font-size: 1.1rem;
+}
+
+.time-widget {
+    text-align: right;
+    z-index: 1;
+}
+
+.time-widget .clock {
+    font-size: 2.5rem;
+    font-weight: 800;
+    display: block;
+}
+
+.time-widget .date {
+    opacity: 0.8;
+    font-size: 0.9rem;
+    font-weight: 500;
+}
+
+.info-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 1.5rem;
+    margin-bottom: 3rem;
+}
+
+.expiry-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 1.5rem;
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+}
+
+.expiry-icon {
+    width: 50px; height: 50px;
+    border-radius: 12px;
+    background: rgba(16, 185, 129, 0.1);
+    color: #10b981;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.5rem;
+}
+
+.expiry-info h4 {
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    margin-bottom: 4px;
+}
+
+.expiry-info .date-val {
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: var(--text-primary);
 }
 
 /* TAB VISIBILITY SYSTEM */
@@ -312,33 +444,29 @@ header {
 @media (max-width: 1100px) {
     .sidebar {
         position: fixed;
-        left: -260px;
+        left: -100%;
         top: 0;
         z-index: 10000;
         box-shadow: 20px 0 50px rgba(0,0,0,0.5);
     }
     .sidebar.open {
-        transform: translateX(260px);
+        left: 0;
     }
     .mobile-header {
         display: flex;
         z-index: 9000;
     }
-    .mobile-only {
-        display: block !important;
-    }
-    .main-content {
+    .dashboard-content {
         padding: 1.5rem;
-        margin-top: 60px; /* Offset for mobile header */
     }
-    .user-row {
+    .greeting-card {
         flex-direction: column;
-        align-items: flex-start !important;
-        gap: 1rem;
+        align-items: flex-start;
+        gap: 1.5rem;
+        padding: 1.5rem;
     }
-    .user-row > div:last-child {
-        width: 100%;
-        justify-content: space-between;
+    .time-widget {
+        text-align: left;
     }
 }
 

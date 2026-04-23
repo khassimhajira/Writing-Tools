@@ -3,7 +3,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { get, run } = require('../database');
-const { checkAmemberAuth } = require('../amember');
+const { checkAmemberAuth, getAmemberExpiry } = require('../amember');
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'stealth_secret_key_123';
@@ -143,6 +143,22 @@ router.get('/services', async (req, res) => {
     }
 });
 
+
+// Subscription Expiry Date
+router.get('/expiry', async (req, res) => {
+    const token = req.cookies.stealth_hub_token;
+    if (!token) return res.status(401).json({ error: 'Not authenticated' });
+    try {
+        const verified = jwt.verify(token, JWT_SECRET);
+        const user = await get('SELECT email FROM users WHERE id = ?', [verified.id]);
+        if (!user) return res.status(404).json({ expiry_date: null });
+        const expiryDate = await getAmemberExpiry(user.email);
+        res.json({ expiry_date: expiryDate });
+    } catch(e) {
+        console.error('Expiry fetch error:', e);
+        res.json({ expiry_date: null });
+    }
+});
 
 // Silent Login from aMember Pro (SSO)
 router.get('/am-login', async (req, res) => {

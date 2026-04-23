@@ -3,55 +3,134 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>StealthWriter Hub | Portal</title>
+    <title>ScholarGenie | Dashboard</title>
     <link rel="stylesheet" href="style.css">
     <link rel="icon" href="FAVICON.png">
     <style>
         .auto-icon {
-            width: 80px; height: 80px; border-radius: 12px;
+            width: 60px; height: 60px; border-radius: 12px;
             display: flex; align-items: center; justify-content: center;
-            font-weight: 800; font-size: 2.2rem; color: white;
+            font-weight: 800; font-size: 1.5rem; color: white;
             background: linear-gradient(135deg, #6366f1, #a855f7);
-            box-shadow: 0 10px 20px rgba(99, 102, 241, 0.2);
             margin-bottom: 1rem;
         }
     </style>
 </head>
-<body>
-    <header id="dash-header">
-        <img src="LOGO.png" alt="Writing Tools" class="logo" onerror="this.outerHTML='<h2 class=\'logo\'>STEALTHWRITER</h2>'">
-        <div class="header-actions">
-            <div id="user-pill" style="font-size: 0.9rem; color: var(--text-secondary); background: var(--input-bg); padding: 0.3rem 0.8rem; border-radius: 20px;">
-                <div class="skeleton skeleton-text" style="width: 80px; margin:0;"></div>
-            </div>
-            <button class="theme-toggle" id="theme-btn" title="Toggle Theme" style="background:transparent; border:none; padding:8px; display:flex; align-items:center; justify-content:center; cursor:pointer; color:var(--text-secondary);">
-                <span id="theme-icon-container" style="display:flex; align-items:center;"></span>
+<body class="app-layout">
+    <!-- MOBILE HEADER -->
+    <div class="mobile-header">
+        <img src="LOGO.png" alt="ScholarGenie" style="height: 24px;">
+        <button onclick="toggleSidebar()" style="background:transparent; border:none; color:white; font-size:1.5rem;">☰</button>
+    </div>
+
+    <!-- SIDEBAR -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo">
+            <img src="LOGO.png" alt="ScholarGenie">
+            <span>ScholarGenie</span>
+        </div>
+        
+        <nav class="sidebar-nav">
+            <a href="/dashboard" class="nav-link active">
+                <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg>
+                Dashboard
+            </a>
+            <a href="#" class="nav-link">
+                <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 11-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 011-1V4z"></path></svg>
+                My Tools
+            </a>
+            <a href="/admin" id="admin-link" class="nav-link" style="display:none;">
+                <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"></path></svg>
+                Admin Panel
+            </a>
+        </nav>
+
+        <div class="sidebar-footer">
+            <button class="theme-toggle" id="theme-btn" style="background:var(--input-bg); border:1px solid var(--border-color); color:var(--text-primary); padding:10px; border-radius:10px; width:100%; margin-bottom:1rem; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:8px;">
+                <span id="theme-icon">☼</span> <span id="theme-text">Light Mode</span>
             </button>
-            <button id="logout-btn" style="background:transparent; color: var(--text-secondary); border:1px solid var(--border-color); padding: 0.3rem 0.8rem; width: auto;">Logout</button>
-        </div>
-    </header>
-
-    <main class="container" style="display: block;">
-        <div id="loading-view">
-            <div class="card"><div class="skeleton-title"></div><div class="skeleton-text"></div><div class="skeleton-btn"></div></div>
-        </div>
-
-        <div id="no-access-view" style="display:none; text-align:left; padding: 4rem 1rem;">
-            <div style="font-size: 4rem; margin-bottom: 2rem;">🛡️</div>
-            <h2 style="margin-bottom:1rem; font-weight:800;">Access Awaiting Activation</h2>
-            <p style="color:var(--text-secondary); max-width:500px; margin-bottom: 2rem;">Your account is ready, but you haven't been assigned any premium tools yet. Please contact your administrator.</p>
-        </div>
-
-        <div id="ready-view">
-            <div style="margin-bottom: 2.5rem;">
-                <h2 style="font-size: 2.2rem; font-weight: 800; margin-bottom: 0.5rem; letter-spacing: -0.02em;">MY SERVICES</h2>
-                <p style="color: var(--text-secondary); font-size: 1.1rem;">Click an icon to launch your workspace.</p>
+            <div id="user-info" style="display:flex; align-items:center; gap:12px; padding:10px; background:rgba(255,255,255,0.03); border-radius:12px; margin-bottom:1rem;">
+                <div id="user-avatar" style="width:40px; height:40px; border-radius:50%; background:var(--primary-color); display:flex; align-items:center; justify-content:center; font-weight:800; color:white;">?</div>
+                <div style="overflow:hidden;">
+                    <div id="user-name" style="font-weight:700; white-space:nowrap; text-overflow:ellipsis; overflow:hidden;">User</div>
+                    <div id="user-email" style="font-size:0.75rem; color:var(--text-secondary); white-space:nowrap; text-overflow:ellipsis; overflow:hidden;">email@example.com</div>
+                </div>
             </div>
-            <div id="services-grid" style="display: flex; flex-wrap: wrap; gap: 2.5rem; justify-content: flex-start; width: 100%;"></div>
+            <button id="logout-btn" style="background:transparent; border:1px solid #f87171; color:#f87171; padding:8px; border-radius:8px; width:100%; cursor:pointer; font-weight:600;">Logout</button>
         </div>
-    </main>
+    </aside>
 
-    <iframe id="portal-frame"></iframe>
+    <!-- MAIN WRAPPER -->
+    <div class="main-wrapper">
+        <header class="top-nav">
+            <div style="font-weight:700; font-size:1.2rem;">Overview</div>
+            <div id="presence-pill" style="font-size:0.8rem; color:#10b981; background:rgba(16,185,129,0.1); padding:4px 12px; border-radius:20px; display:flex; align-items:center; gap:6px;">
+                <span style="width:8px; height:8px; background:#10b981; border-radius:50%;"></span>
+                Online
+            </div>
+        </header>
+
+        <main class="dashboard-content">
+            <!-- GREETING CARD -->
+            <div class="greeting-card animate-in">
+                <div class="greeting-text">
+                    <h2 id="greeting-title">Good Morning, User! 👋</h2>
+                    <p>Welcome back to your workspace. All your premium tools are ready.</p>
+                </div>
+                <div class="time-widget">
+                    <span class="clock" id="clock">00:00</span>
+                    <span class="date" id="date">Thursday, April 23</span>
+                </div>
+            </div>
+
+            <!-- INFO GRID -->
+            <div class="info-grid">
+                <!-- SUBSCRIPTION CARD -->
+                <div class="expiry-card animate-in" style="animation-delay: 0.1s;">
+                    <div class="expiry-icon">📅</div>
+                    <div class="expiry-info">
+                        <h4>Subscription Status</h4>
+                        <div class="date-val" id="expiry-val">Loading...</div>
+                    </div>
+                </div>
+                <!-- ACCOUNT CARD -->
+                <div class="expiry-card animate-in" style="animation-delay: 0.2s;">
+                    <div class="expiry-icon" style="background:rgba(59, 130, 246, 0.1); color:#3b82f6;">👤</div>
+                    <div class="expiry-info">
+                        <h4>Account Type</h4>
+                        <div class="date-val" id="role-val">Premium Member</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TOOLS GRID -->
+            <div id="ready-view">
+                <div style="margin-bottom: 2rem;">
+                    <h3 style="font-size: 1.5rem; font-weight: 800;">My Tools</h3>
+                </div>
+                <div id="services-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1.5rem;"></div>
+            </div>
+
+            <!-- LOADING VIEW -->
+            <div id="loading-view" style="display:flex; justify-content:center; align-items:center; height:300px;">
+                <div class="card" style="width:300px; text-align:center;">
+                    <div class="skeleton-title" style="margin: 0 auto 1rem;"></div>
+                    <div class="skeleton-text"></div>
+                    <div class="skeleton-btn"></div>
+                </div>
+            </div>
+
+            <!-- NO ACCESS VIEW -->
+            <div id="no-access-view" style="display:none; text-align:center; padding: 4rem 1rem;">
+                <div style="font-size: 4rem; margin-bottom: 2rem;">🛡️</div>
+                <h2 style="margin-bottom:1rem; font-weight:800;">Access Awaiting Activation</h2>
+                <p style="color:var(--text-secondary); max-width:500px; margin: 0 auto 2rem;">Your account is ready, but you haven't been assigned any premium tools yet.</p>
+            </div>
+        </main>
+    </div>
+
+    <!-- PORTAL OVERLAY -->
+    <iframe id="portal-frame" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; border:none; background:white; z-index:10000;"></iframe>
     <button id="portal-exit" onclick="exitPortal()">
         <svg style="width:18px;height:18px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"></path></svg>
         Back to Dashboard
@@ -61,6 +140,27 @@
     <script>
         const socket = io();
         let currentUser = null;
+
+        function updateClock() {
+            const now = new Date();
+            const hours = String(now.getHours()).padStart(2, '0');
+            const minutes = String(now.getMinutes()).padStart(2, '0');
+            document.getElementById('clock').textContent = `${hours}:${minutes}`;
+            
+            const options = { weekday: 'long', month: 'long', day: 'numeric' };
+            document.getElementById('date').textContent = now.toLocaleDateString('en-US', options);
+
+            const hr = now.getHours();
+            let greet = "Good Evening";
+            if (hr < 12) greet = "Good Morning";
+            else if (hr < 18) greet = "Good Afternoon";
+            
+            if (currentUser) {
+                document.getElementById('greeting-title').textContent = `${greet}, ${currentUser.username}! 👋`;
+            }
+        }
+        setInterval(updateClock, 60000);
+        updateClock();
 
         function generateAutoIcon(name) {
             const letters = (name || '?').substring(0, 2).toUpperCase();
@@ -72,7 +172,33 @@
                 const userRes = await fetch('/hub/api/auth/me');
                 if (!userRes.ok) throw new Error();
                 currentUser = await userRes.json();
-                document.getElementById('user-pill').innerHTML = currentUser.username;
+                
+                document.getElementById('user-name').textContent = currentUser.username;
+                document.getElementById('user-email').textContent = currentUser.email;
+                document.getElementById('user-avatar').textContent = currentUser.username.substring(0, 1).toUpperCase();
+                document.getElementById('role-val').textContent = currentUser.role === 'admin' ? 'Administrator' : 'Premium Member';
+                
+                if (currentUser.role === 'admin') {
+                    document.getElementById('admin-link').style.display = 'flex';
+                }
+
+                updateClock();
+
+                // Fetch Expiry
+                try {
+                    const expRes = await fetch('/hub/api/auth/expiry');
+                    const expData = await expRes.json();
+                    if (expData.expiry_date) {
+                        const date = new Date(expData.expiry_date);
+                        document.getElementById('expiry-val').textContent = date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+                        document.getElementById('expiry-val').style.color = '#10b981';
+                    } else {
+                        document.getElementById('expiry-val').textContent = 'No active plan';
+                        document.getElementById('expiry-val').style.color = '#f87171';
+                    }
+                } catch(e) {
+                    document.getElementById('expiry-val').textContent = 'N/A';
+                }
 
                 const servicesRes = await fetch('/hub/api/auth/services');
                 const services = await servicesRes.json();
@@ -80,28 +206,23 @@
                 document.getElementById('loading-view').style.display = 'none';
                 
                 if (services && services.length > 0) {
-                    document.getElementById('ready-view').style.display = 'flex';
+                    document.getElementById('ready-view').style.display = 'block';
                     document.getElementById('no-access-view').style.display = 'none';
                     
-                    document.getElementById('services-grid').innerHTML = services.map(s => `
-                        <div class="service-wrapper">
-                            <div class="service-logo-card animate-in" onclick="launchPortal('${s.slug}')" title="Launch ${s.name}">
-                                <div class="logo-composite ${s.slug === 'stealth' ? 'invert-dark' : ''}">
-                                    <div class="logo-icon">
-                                        ${s.icon_svg ? (
-                                            s.icon_svg.trim().startsWith('<svg') || s.icon_svg.trim().startsWith('<div') 
-                                            ? s.icon_svg 
-                                            : `<img src="${s.icon_svg}" alt="" style="height:100%; width:100%; object-fit:contain;">`
-                                        ) : generateAutoIcon(s.name)}
-                                    </div>
-                                    <div class="logo-text">${s.text_svg || `<span>${s.name}</span>`}</div>
-                                </div>
-                                <div class="status-overlay"></div>
+                    document.getElementById('services-grid').innerHTML = services.map((s, idx) => `
+                        <div class="tool-card animate-in" style="animation-delay: ${0.1 * idx}s; padding: 2rem;">
+                            <div class="tool-logo-container" style="margin-bottom: 1.5rem;">
+                                ${s.icon_svg ? (
+                                    s.icon_svg.trim().startsWith('<svg') || s.icon_svg.trim().startsWith('<div') 
+                                    ? s.icon_svg 
+                                    : `<img src="${s.icon_svg}" alt="" style="height:100%; width:100%; object-fit:contain;">`
+                                ) : generateAutoIcon(s.name)}
                             </div>
+                            <h3 style="margin-bottom: 0.5rem;">${s.name}</h3>
+                            <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 1.5rem;">Premium access for ${s.name} workspace.</p>
+                            <button onclick="launchPortal('${s.slug}')" class="tool-action-btn">Launch Workspace</button>
                         </div>
                     `).join('');
-
-
                 } else {
                     document.getElementById('ready-view').style.display = 'none';
                     document.getElementById('no-access-view').style.display = 'block';
@@ -127,14 +248,36 @@
             document.getElementById('portal-exit').style.display = 'none';
         }
 
+        function toggleSidebar() {
+            document.getElementById('sidebar').classList.toggle('open');
+        }
+
         socket.on('force_refresh', () => init());
         socket.on('global_reload', () => init());
 
         document.getElementById('logout-btn').onclick = () => { window.location.href = '/hub/api/auth/logout'; };
-        const themeBtn = document.getElementById('theme-btn'), themeCont = document.getElementById('theme-icon-container');
-        function updateThemeUI(t) { themeCont.innerHTML = t==='light'?'☾':'☼'; }
-        themeBtn.onclick = () => { const cur = document.documentElement.getAttribute('data-theme')||'dark', next = cur==='dark'?'light':'dark'; document.documentElement.setAttribute('data-theme', next); localStorage.setItem('hub-theme', next); updateThemeUI(next); };
-        const saved = localStorage.getItem('hub-theme')||'dark'; document.documentElement.setAttribute('data-theme', saved); updateThemeUI(saved);
+        
+        const themeBtn = document.getElementById('theme-btn');
+        const themeIcon = document.getElementById('theme-icon');
+        const themeText = document.getElementById('theme-text');
+
+        function updateThemeUI(t) { 
+            themeIcon.innerHTML = t==='light'?'☾':'☼'; 
+            themeText.textContent = t==='light'?'Dark Mode':'Light Mode';
+        }
+
+        themeBtn.onclick = () => { 
+            const cur = document.documentElement.getAttribute('data-theme')||'dark';
+            const next = cur==='dark'?'light':'dark'; 
+            document.documentElement.setAttribute('data-theme', next); 
+            localStorage.setItem('hub-theme', next); 
+            updateThemeUI(next); 
+        };
+
+        const saved = localStorage.getItem('hub-theme')||'dark'; 
+        document.documentElement.setAttribute('data-theme', saved); 
+        updateThemeUI(saved);
+        
         init();
     </script>
 </body>

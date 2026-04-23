@@ -227,4 +227,23 @@ async function verifyAmemberSession(session_id) {
     }
 }
 
-module.exports = { checkAmemberAuth, getAmemberUsers, syncAmemberUsers, verifyAmemberUser, verifyAmemberSession };
+async function getAmemberExpiry(email) {
+    if (process.env.AMEMBER_ENABLE !== 'true' || !pool) return null;
+    try {
+        const prefix = amemberConfig.prefix;
+        const [rows] = await pool.execute(
+            `SELECT MAX(a.expire_date) as expiry_date
+             FROM ${prefix}user u
+             JOIN ${prefix}access a ON u.user_id = a.user_id
+             WHERE u.email = ? AND a.expire_date >= CURDATE()
+             LIMIT 1`,
+            [email]
+        );
+        return rows[0]?.expiry_date || null;
+    } catch (e) {
+        console.error('[aMember Expiry] Error:', e.message);
+        return null;
+    }
+}
+
+module.exports = { checkAmemberAuth, getAmemberUsers, syncAmemberUsers, verifyAmemberUser, verifyAmemberSession, getAmemberExpiry };

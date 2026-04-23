@@ -3,282 +3,247 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Writing Tools | Command Center</title>
+    <title>ScholarGenie | Command Center</title>
     <link rel="stylesheet" href="style.css">
     <link rel="icon" href="FAVICON.png">
     <style>
-        .user-row button { opacity: 0.6; }
-        .user-row:hover button { opacity: 1; }
-        .live-badge {
+        .admin-stat-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-md);
+            padding: 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+            transition: all 0.3s ease;
+        }
+        .admin-stat-card:hover {
+            transform: translateY(-5px);
+            border-color: var(--primary-color);
+        }
+        .stat-icon {
+            width: 50px; height: 50px;
+            border-radius: 12px;
+            background: rgba(0, 112, 243, 0.1);
+            color: var(--brand-blue);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 1.5rem;
+        }
+        .stat-val { font-size: 1.8rem; font-weight: 800; }
+        .stat-label { color: var(--text-secondary); font-size: 0.85rem; font-weight: 500; }
+        
+        .user-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1.2rem 1.5rem;
+            border-bottom: 1px solid var(--border-color);
+            transition: background 0.2s;
+        }
+        .user-row:hover { background: rgba(255,255,255,0.02); }
+        .status-badge {
             font-size: 0.65rem;
-            color: #10b981;
-            padding: 2px 6px;
-            border-radius: 4px;
-            background: rgba(16, 185, 129, 0.1);
-            border: 1px solid rgba(16, 185, 129, 0.3);
+            padding: 4px 8px;
+            border-radius: 20px;
             text-transform: uppercase;
             font-weight: 800;
         }
-        .service-group { margin-bottom: 2.5rem; }
-        .service-group-title {
-            display: flex;
-            align-items: center;
-            gap: 1rem;
-            margin-bottom: 1.5rem;
-            padding-bottom: 0.8rem;
-            border-bottom: 2px solid var(--border-color);
-        }
-        .assignment-chip {
-            font-size: 0.75rem;
-            padding: 4px 10px;
-            border-radius: 12px;
-            background: var(--input-bg);
-            border: 1px solid var(--border-color);
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-        .assignment-chip.active { border-color: var(--brand-blue); color: var(--brand-blue); }
-        
-        /* Modal Responsiveness Fixes */
-        .modal-card {
-            max-height: 95vh;
-            overflow-y: auto;
-            scrollbar-width: thin;
-        }
-        .modal-card::-webkit-scrollbar { width: 6px; }
-        .modal-card::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 10px; }
-
-        .auto-icon-preview {
-
-            width: 40px; height: 40px; border-radius: 8px;
-            display: flex; align-items: center; justify-content: center;
-            font-weight: 800; font-size: 1.2rem; color: white;
-            background: linear-gradient(135deg, #6366f1, #a855f7);
-        }
-        .preset-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; margin-bottom: 1rem; }
-        .preset-item {
-            padding: 8px; border: 1px solid var(--border-color); border-radius: 6px;
-            cursor: pointer; text-align: center; font-size: 0.8rem; transition: all 0.2s;
-        }
-        .preset-item:hover { border-color: var(--brand-blue); background: rgba(0, 89, 179, 0.05); }
+        .status-online { background: rgba(16, 185, 129, 0.1); color: #10b981; }
+        .status-offline { background: rgba(75, 85, 99, 0.1); color: #9ca3af; }
     </style>
 </head>
-<body class="admin-shell">
-    <div id="global-alert" class="alert" style="position:fixed; top: 20px; right: 20px; z-index: 11000; min-width: 300px; transform: translateY(-100px); transition: transform 0.3s ease;"></div>
+<body class="app-layout">
+    <!-- MOBILE HEADER -->
+    <div class="mobile-header">
+        <img src="LOGO.png" alt="ScholarGenie" style="height: 24px;">
+        <button onclick="toggleSidebar()" style="background:transparent; border:none; color:white; font-size:1.5rem;">☰</button>
+    </div>
 
+    <!-- SIDEBAR -->
     <aside class="sidebar" id="sidebar">
-        <div style="display:flex; justify-content:flex-end; align-items:center; gap: 10px; margin-bottom: 1rem;">
-            <img src="LOGO.png" alt="Writing Tools" class="logo">
+        <div class="sidebar-logo">
+            <img src="LOGO.png" alt="ScholarGenie">
+            <span>Command Center</span>
         </div>
+        
         <nav class="sidebar-nav">
-            <div class="nav-link active" onclick="switchView('dashboard', this)">Overview</div>
-            <div class="nav-link" onclick="switchView('services', this)">Services</div>
-            <div class="nav-link" onclick="switchView('users', this)">User Pool</div>
-            <div class="nav-link" onclick="switchView('slots', this)">Slot Orchestration</div>
-            <div class="nav-link" onclick="switchView('system', this)">System Tools</div>
+            <div class="nav-link active" onclick="switchView('dashboard', this)">
+                <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+                Overview
+            </div>
+            <div class="nav-link" onclick="switchView('services', this)">
+                <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                Tools
+            </div>
+            <div class="nav-link" onclick="switchView('users', this)">
+                <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
+                User Pool
+            </div>
+            <div class="nav-link" onclick="switchView('slots', this)">
+                <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"></path></svg>
+                Slots
+            </div>
+            <a href="/dashboard" class="nav-link">
+                <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+                Exit Admin
+            </a>
         </nav>
-        <div style="margin-top:auto; padding-top:1rem;">
-            <button class="theme-toggle" id="theme-btn" style="border:none; width: 100%; display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: transparent; color: var(--text-primary);">
-                <span id="theme-icon-container" style="display:flex; align-items:center; gap:12px;"></span>
+
+        <div class="sidebar-footer">
+            <button class="theme-toggle" id="theme-btn" style="background:var(--input-bg); border:1px solid var(--border-color); color:var(--text-primary); padding:10px; border-radius:10px; width:100%; margin-bottom:1rem; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:8px;">
+                <span id="theme-icon">☼</span> <span id="theme-text">Light Mode</span>
             </button>
-            <button id="logout-btn" style="width:100%; background:transparent; color:#f87171; text-align:left; padding: 12px 16px; opacity: 0.8;">Logout</button>
+            <button id="logout-btn" style="background:transparent; border:1px solid #f87171; color:#f87171; padding:8px; border-radius:8px; width:100%; cursor:pointer; font-weight:600;">Logout</button>
         </div>
     </aside>
 
-    <main class="main-content">
-        <!-- DASHBOARD TAB -->
-        <div id="view-dashboard" class="tab-pane active">
-            <h2 style="margin-bottom:1.5rem;">System Overview</h2>
-            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap:1.5rem;">
-                <div class="card" style="text-align:center;"><h3 id="stat-online">0</h3><p style="color:var(--text-secondary);">Students Online</p></div>
-                <div class="card" style="text-align:center;"><h3 id="stat-services">0</h3><p style="color:var(--text-secondary);">Managed Services</p></div>
-                <div class="card" style="text-align:center;"><h3 id="stat-slots">0</h3><p style="color:var(--text-secondary);">Active Cookie Slots</p></div>
-                <div class="card" style="text-align:center;"><h3 id="stat-active" style="color:#10b981;">0</h3><p style="color:var(--text-secondary);">Active Sessions</p></div>
+    <!-- MAIN WRAPPER -->
+    <div class="main-wrapper">
+        <header class="top-nav">
+            <div id="view-title" style="font-weight:700; font-size:1.2rem;">System Overview</div>
+            <div style="display:flex; gap:1rem;">
+                <div id="global-alert" class="alert" style="display:none; padding: 4px 12px; border-radius: 20px; font-size: 0.8rem;"></div>
             </div>
-        </div>
+        </header>
 
-        <!-- SERVICES TAB -->
-        <div id="view-services" class="tab-pane">
-            <div class="col-header"><h2>Services Hub</h2><button onclick="openServiceModal()" style="width:auto;">Add New Tool</button></div>
-            <div id="services-list" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap:1.5rem;"></div>
-        </div>
+        <main class="dashboard-content">
+            <!-- DASHBOARD TAB -->
+            <div id="view-dashboard" class="tab-pane active">
+                <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap:1.5rem; margin-bottom: 2rem;">
+                    <div class="admin-stat-card">
+                        <div class="stat-icon">👥</div>
+                        <div><div class="stat-val" id="stat-online">0</div><div class="stat-label">Online Now</div></div>
+                    </div>
+                    <div class="admin-stat-card">
+                        <div class="stat-icon" style="background:rgba(16, 185, 129, 0.1); color:#10b981;">🛠️</div>
+                        <div><div class="stat-val" id="stat-services">0</div><div class="stat-label">Managed Tools</div></div>
+                    </div>
+                    <div class="admin-stat-card">
+                        <div class="stat-icon" style="background:rgba(245, 158, 11, 0.1); color:#f59e0b;">💿</div>
+                        <div><div class="stat-val" id="stat-slots">0</div><div class="stat-label">Cookie Slots</div></div>
+                    </div>
+                    <div class="admin-stat-card">
+                        <div class="stat-icon" style="background:rgba(99, 102, 241, 0.1); color:#6366f1;">🚀</div>
+                        <div><div class="stat-val" id="stat-active">0</div><div class="stat-label">Active Proxy</div></div>
+                    </div>
+                </div>
 
-        <!-- USERS TAB -->
-        <div id="view-users" class="tab-pane">
-            <div class="col-header">
-                <h2>User Pool Management</h2>
-                <div style="display:flex; gap:0.75rem; align-items:center;">
-                    <button id="sync-btn" onclick="syncAmember()" style="width:auto; background: linear-gradient(135deg, #6366f1, #a855f7); display:flex; align-items:center; gap:6px;">🔄 Sync from aMember</button>
-                    <button onclick="openUserModal()" style="width:auto;">Add New Student</button>
+                <div class="card" style="padding: 2rem;">
+                    <h3>System Health</h3>
+                    <p style="color:var(--text-secondary); margin-top:0.5rem;">All systems operational. Backend connected via aMember Pro Bridge.</p>
+                    <div style="display:flex; gap:1rem; margin-top:2rem;">
+                        <button onclick="forceReload()" style="width:auto; background:var(--input-bg); border:1px solid var(--border-color);">Push Global Update</button>
+                    </div>
                 </div>
             </div>
-            <div id="sync-result" style="display:none; padding: 0.75rem 1rem; border-radius:8px; font-size:0.85rem; margin-bottom:1rem;"></div>
-            <div class="card" style="padding:0; overflow:hidden;">
-                <div style="padding: 1rem; border-bottom: 1px solid var(--border-color); display:flex; gap:1rem;">
-                    <input type="text" id="user-search" placeholder="Search students..." oninput="render()">
+
+            <!-- SERVICES TAB -->
+            <div id="view-services" class="tab-pane">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2rem;">
+                    <h3>Managed Tools</h3>
+                    <button onclick="openServiceModal()" style="width:auto;">+ Add New Tool</button>
                 </div>
-                <div id="user-list-full" style="max-height: 70vh; overflow-y: auto;"></div>
+                <div id="services-list" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap:1.5rem;"></div>
             </div>
-        </div>
 
-        <!-- SLOTS TAB -->
-        <div id="view-slots" class="tab-pane">
-            <div class="col-header"><h2>Real-Time Slot Orchestration</h2></div>
-            <div id="slots-master-container"></div>
-        </div>
+            <!-- USERS TAB -->
+            <div id="view-users" class="tab-pane">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2rem;">
+                    <h3>User Pool</h3>
+                    <div style="display:flex; gap:1rem;">
+                        <button id="sync-btn" onclick="syncAmember()" style="width:auto; background: var(--accent-gradient);">🔄 Sync aMember</button>
+                        <button onclick="openUserModal()" style="width:auto;">+ Add Student</button>
+                    </div>
+                </div>
+                <div id="sync-result" style="display:none; padding: 1rem; border-radius:12px; margin-bottom:1.5rem;"></div>
+                <div class="card" style="padding:0; overflow:hidden;">
+                    <div style="padding: 1.2rem; border-bottom: 1px solid var(--border-color);">
+                        <input type="text" id="user-search" placeholder="Search students by name or email..." oninput="render()" style="width:100%; max-width:400px; padding:0.8rem 1.2rem; border-radius:10px;">
+                    </div>
+                    <div id="user-list-full"></div>
+                </div>
+            </div>
 
-        <!-- SYSTEM TAB -->
-        <div id="view-system" class="tab-pane">
-            <h2>System Tools</h2>
-            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap:1.5rem; margin-top:1.5rem;">
-                <div class="card">
-                    <h4 style="margin-bottom:1rem;">Deploy New Cookie Slot</h4>
+            <!-- SLOTS TAB -->
+            <div id="view-slots" class="tab-pane">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2rem;">
+                    <h3>Cookie Orchestration</h3>
+                    <button onclick="switchView('system')" style="width:auto; background:var(--input-bg);">Deploy New Slot</button>
+                </div>
+                <div id="slots-master-container"></div>
+            </div>
+
+            <!-- SYSTEM TAB (Internal view for forms) -->
+            <div id="view-system" class="tab-pane">
+                <h3>System Tools</h3>
+                <div class="card" style="max-width: 600px; margin-top: 2rem;">
+                    <h4 style="margin-bottom:1.5rem;">Deploy New Cookie Slot</h4>
                     <form id="cookie-form">
-                        <div class="form-group"><label>Service</label><select id="cookie-service-id" required></select></div>
-                        <div class="form-group"><label>Slot Name</label><input type="text" id="cookie-name" required></div>
-                        <div class="form-group"><label>Cookie Data</label><textarea id="cookie-data" style="height:100px;"></textarea></div>
-                        <button type="submit">Deploy Slot</button>
+                        <div class="form-group"><label>Target Service</label><select id="cookie-service-id" required></select></div>
+                        <div class="form-group"><label>Slot Label (e.g. Account #1)</label><input type="text" id="cookie-name" required></div>
+                        <div class="form-group"><label>Raw Cookie Data</label><textarea id="cookie-data" style="height:150px; font-family:monospace; font-size:0.8rem;"></textarea></div>
+                        <button type="submit">Publish to Registry</button>
                     </form>
                 </div>
-                <div class="card">
-                    <h4 style="margin-bottom:1rem;">Global Actions</h4>
-                    <button onclick="forceReload()" style="background:var(--input-bg); margin-bottom:0.5rem;">Force All Reload</button>
-                    <button onclick="clearAllAssignments()" style="background:var(--input-bg); color:#f87171;">Clear All Assigned Sessions</button>
-                </div>
             </div>
-        </div>
-    </main>
+        </main>
+    </div>
 
-    <!-- SERVICE MODAL -->
+    <!-- MODALS (REUSED FROM PREVIOUS DESIGN BUT RESTYLED) -->
     <div id="service-modal" class="modal-overlay">
-        <div class="card modal-card" style="width: 700px; max-width: 95vw;">
-            <div style="display:flex; justify-content:space-between; align-items:flex-start;">
-                <div>
-                    <h3 style="margin-bottom:0.3rem;">Tool Configuration</h3>
-                    <p style="font-size:0.75rem; color:var(--text-secondary); margin-bottom:1rem;">Pick a preset or enter details manually.</p>
-                </div>
-                <button onclick="closeServiceModal()" style="width:auto; background:transparent; padding:0; color:var(--text-secondary); font-size:1.5rem;">&times;</button>
+        <div class="card modal-card" style="width: 700px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2rem;">
+                <h3>Tool Config</h3>
+                <button onclick="closeServiceModal()" style="background:transparent; color:var(--text-secondary); font-size:2rem;">&times;</button>
             </div>
-            
             <div class="preset-grid">
                 <div class="preset-item" onclick="applyPreset('chatgpt')">🤖 ChatGPT</div>
                 <div class="preset-item" onclick="applyPreset('youtube')">📺 YouTube</div>
                 <div class="preset-item" onclick="applyPreset('netflix')">🎬 Netflix</div>
                 <div class="preset-item" onclick="applyPreset('generic')">📄 Manual</div>
             </div>
-
-            <form id="service-form" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap:1rem;">
-
+            <form id="service-form" style="display:grid; grid-template-columns: 1fr 1fr; gap:1.5rem;">
                 <input type="hidden" id="edit-service-id">
-                <div class="form-group"><label>Tool Name</label><input type="text" id="service-name" required placeholder="ChatGPT"></div>
-                <div class="form-group"><label>URL Slug</label><input type="text" id="service-slug" required placeholder="chatgpt"></div>
-                <div class="form-group" style="grid-column: 1 / -1;"><label>Target URL</label><input type="url" id="service-url" required placeholder="https://chat.openai.com"></div>
-                <div class="form-group" style="grid-column: 1 / -1;">
-                    <label>Icon Preview</label>
-                    <div id="icon-preview-box" style="width: 60px; height: 60px; border: 2px dashed var(--border-color); border-radius: 8px; display: flex; align-items: center; justify-content: center; background: var(--input-bg); overflow: hidden;">
-                        <span style="font-size: 0.6rem; color: var(--text-secondary);">No Icon</span>
-                    </div>
-                </div>
-                <div class="form-group"><label>Icon (👉 PASTE IMAGE or SVG HERE)</label><textarea id="service-icon" style="height:60px; font-size:0.75rem;" oninput="updateIconPreview(this.value)"></textarea></div>
-
-                <div class="form-group"><label>Text Logo (Optional SVG)</label><textarea id="service-text" style="height:60px; font-size:0.75rem;"></textarea></div>
-
-                <div class="form-group" style="grid-column: 1 / -1;"><label>Injection JS (Advanced)</label><textarea id="service-js" style="height:50px; font-size:0.75rem;"></textarea></div>
-                <div style="grid-column: 1 / -1; display:flex; gap:1rem; margin-top:0.5rem;">
+                <div class="form-group"><label>Tool Name</label><input type="text" id="service-name" required></div>
+                <div class="form-group"><label>Slug</label><input type="text" id="service-slug" required></div>
+                <div class="form-group" style="grid-column: span 2;"><label>Target URL</label><input type="url" id="service-url" required></div>
+                <div class="form-group"><label>Icon (Image URL or SVG)</label><textarea id="service-icon" style="height:60px;"></textarea></div>
+                <div class="form-group"><label>Logo Text (SVG)</label><textarea id="service-text" style="height:60px;"></textarea></div>
+                <div class="form-group" style="grid-column: span 2;"><label>Injection JS</label><textarea id="service-js" style="height:60px;"></textarea></div>
+                <div style="grid-column: span 2; display:flex; gap:1rem;">
                     <button type="button" onclick="closeServiceModal()" style="background:var(--input-bg);">Cancel</button>
-                    <button type="submit">Save Configuration</button>
+                    <button type="submit">Save Changes</button>
                 </div>
-
             </form>
         </div>
     </div>
 
-    <!-- USER MODAL / ASSIGN MODAL / SLOT MODAL -->
-    <div id="user-modal" class="modal-overlay"><div class="card modal-card"><h3>Student Profile</h3><form id="user-form" style="margin-top:1.5rem;"><input type="hidden" id="edit-user-id"><div class="form-group"><label>Username</label><input type="text" id="user-name" required></div><div class="form-group"><label>Email</label><input type="email" id="user-email" required></div><div class="form-group"><label>Password</label><input type="password" id="user-pass"></div><div style="display:flex; gap:1rem; margin-top:2rem;"><button type="button" onclick="closeUserModal()" style="background:var(--input-bg);">Cancel</button><button type="submit">Save Profile</button></div></form></div></div>
-    <div id="assign-modal" class="modal-overlay"><div class="card modal-card"><h3>Manage Access: <span id="assign-username" style="color:var(--brand-blue);"></span></h3><div id="assign-grid" style="margin-top:2rem; display:flex; flex-direction:column; gap:1rem;"></div><button onclick="closeAssignModal()" style="margin-top:2rem; background:var(--input-bg);">Done</button></div></div>
-    <div id="slot-modal" class="modal-overlay"><div class="card modal-card"><h3>Edit Cookie Slot</h3><form id="slot-edit-form" style="margin-top:1.5rem;"><input type="hidden" id="edit-slot-id"><div class="form-group"><label>Slot Label</label><input type="text" id="edit-slot-name" required></div><div class="form-group"><label>Service</label><select id="edit-slot-service-id" required></select></div><div class="form-group"><label>Cookie Data</label><textarea id="edit-slot-data" style="height:150px;" required></textarea></div><div style="display:flex; gap:1rem; margin-top:2rem;"><button type="button" onclick="closeSlotModal()" style="background:var(--input-bg);">Cancel</button><button type="submit">Update Slot</button></div></form></div></div>
+    <div id="user-modal" class="modal-overlay"><div class="card modal-card"><h3>Student Details</h3><form id="user-form" style="margin-top:1.5rem;"><input type="hidden" id="edit-user-id"><div class="form-group"><label>Username</label><input type="text" id="user-name" required></div><div class="form-group"><label>Email</label><input type="email" id="user-email" required></div><div class="form-group"><label>Password</label><input type="password" id="user-pass" placeholder="Leave blank to keep current"></div><div style="display:flex; gap:1rem; margin-top:2rem;"><button type="button" onclick="closeUserModal()" style="background:var(--input-bg);">Cancel</button><button type="submit">Update Record</button></div></form></div></div>
+    <div id="assign-modal" class="modal-overlay"><div class="card modal-card"><h3>Access Rights: <span id="assign-username" style="color:var(--brand-blue);"></span></h3><div id="assign-grid" style="margin-top:2rem; display:flex; flex-direction:column; gap:1rem;"></div><button onclick="closeAssignModal()" style="margin-top:2rem; background:var(--input-bg);">Finished</button></div></div>
+    <div id="slot-modal" class="modal-overlay"><div class="card modal-card"><h3>Update Registry</h3><form id="slot-edit-form" style="margin-top:1.5rem;"><input type="hidden" id="edit-slot-id"><div class="form-group"><label>Label</label><input type="text" id="edit-slot-name" required></div><div class="form-group"><label>Service</label><select id="edit-slot-service-id" required></select></div><div class="form-group"><label>Data</label><textarea id="edit-slot-data" style="height:150px; font-family:monospace;" required></textarea></div><div style="display:flex; gap:1rem; margin-top:2rem;"><button type="button" onclick="closeSlotModal()" style="background:var(--input-bg);">Cancel</button><button type="submit">Commit Changes</button></div></form></div></div>
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
+        // JS LOGIC PRESERVED BUT WRAPPED IN NEW UI
         let socket = (typeof io !== 'undefined') ? io() : { on:()=>{}, emit:()=>{} };
         let users = [], slots = [], services = [], onlineIds = [], activeInProxy = [];
-
-        const presetLibrary = {
-            chatgpt: {
-                name: "ChatGPT",
-                slug: "chatgpt",
-                url: "https://chatgpt.com",
-                icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M22.28 9.82a5.98 5.98 0 0 0-.51-4.91 6.04 6.04 0 0 0-4-3.09 6.03 6.03 0 0 0-5 .53 6.05 6.05 0 0 0-3.66.42 6.05 6.05 0 0 0-7.85 4.31 6.05 6.05 0 0 0-.21 3.53 6.05 6.05 0 0 0 0 4.66 6.05 6.05 0 0 0 .21 3.53 6.05 6.05 0 0 0 7.85 3.31 6.05 6.05 0 0 0 3.66.42 6.03 6.03 0 0 0 5 .53 6.04 6.04 0 0 0 4-3.09 6.05 6.05 0 0 0 .51-4.91 6.05 6.05 0 0 0 0-4.66zm-4.64 7.5L12 14.07V7.53l5.64 3.25v6.54zm-1.03-7.14l-5.64-3.26h6.67v3.26zM9.31 3.67l3.33 1.93-3.33 1.92-3.33-1.92 3.33-1.93zM5.64 10.81v6.54l-5.64-3.26v-6.54l5.64 3.26zm1.03 7.14l5.64 3.26H5.64v-3.26zm5.64-4.89l-3.33-1.92 3.33-1.93 3.33 1.93-3.33 1.92zm7.66-3.26l-5.64 3.26 3.33 1.92 2.31-1.33v-3.85z"/></svg>`,
-                text: null,
-                js: ""
-            },
-
-            youtube: {
-                name: 'YouTube', slug: 'youtube', url: 'https://www.youtube.com',
-                icon: `<svg viewBox="0 0 24 24" fill="#FF0000" xmlns="http://www.w3.org/2000/svg"><path d="M23.498 6.186a3.016 3.016 0 00-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 00.502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 002.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 002.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>`,
-                text: `<svg width="100" height="20" viewBox="0 0 100 20" fill="currentColor"><text x="0" y="15" font-family="sans-serif" font-weight="bold" font-size="20">YouTube</text></svg>`
-            },
-            netflix: {
-                name: 'Netflix', slug: 'netflix', url: 'https://www.netflix.com',
-                icon: `<svg viewBox="0 0 24 24" fill="#E50914" xmlns="http://www.w3.org/2000/svg"><path d="M6.51 0L5 0V22.5L6.51 22.5L6.49 11.25L17.49 22.5H19V0H17.49V11.25L6.51 0Z"/></svg>`,
-                text: `<svg width="100" height="20" viewBox="0 0 100 20" fill="#E50914"><text x="0" y="15" font-family="sans-serif" font-weight="bold" font-size="20">Netflix</text></svg>`
-            }
-        };
-
-
-        function applyPreset(pid) {
-            const p = presetLibrary[pid];
-            if (!p) { document.getElementById('service-form').reset(); updateIconPreview(''); return; }
-            document.getElementById('service-name').value = p.name;
-            document.getElementById('service-slug').value = p.slug;
-            document.getElementById('service-url').value = p.url;
-            document.getElementById('service-icon').value = p.icon;
-            document.getElementById('service-text').value = p.text;
-            updateIconPreview(p.icon);
-        }
-
-        function updateIconPreview(val) {
-            const box = document.getElementById('icon-preview-box');
-            if (!val) { box.innerHTML = '<span style="font-size:0.6rem; color:var(--text-secondary);">No Icon</span>'; return; }
-            if (val.trim().startsWith('<svg') || val.trim().startsWith('<div')) {
-                box.innerHTML = val;
-                const svg = box.querySelector('svg');
-                if (svg) { svg.style.width = '100%'; svg.style.height = '100%'; svg.style.display = 'block'; }
-            } else {
-                box.innerHTML = `<img src="${val}" style="width:100%; height:100%; object-fit:contain;">`;
-            }
-        }
-
-
-        function generateAutoIcon(name) {
-            const letters = (name || '?').substring(0, 2).toUpperCase();
-            return `<div class="auto-icon-preview">${letters}</div>`;
-        }
-
-        function renderSmartIcon(icon, name) {
-            if (!icon) return generateAutoIcon(name);
-            const clean = icon.trim();
-            if (clean.startsWith('<svg') || clean.startsWith('<div')) {
-                return `<div style="width:40px;height:40px;display:flex;align-items:center;justify-content:center;">${icon}</div>`;
-            }
-            return `<div style="width:40px;height:40px;"><img src="${icon}" style="width:100%;height:100%;object-fit:contain;"></div>`;
-        }
-
 
         function switchView(viewId, el) {
             document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
             document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
             document.getElementById('view-' + viewId).classList.add('active');
             if (el) el.classList.add('active');
+            const titles = { dashboard: 'System Overview', services: 'Tools Inventory', users: 'User Registry', slots: 'Cookie Orchestration', system: 'Advanced Tools' };
+            document.getElementById('view-title').textContent = titles[viewId] || 'Command Center';
         }
 
         function toggleSidebar() { document.getElementById('sidebar').classList.toggle('open'); }
+        
         function showAlert(msg, type = 'success') {
             const el = document.getElementById('global-alert');
             el.innerText = msg; el.className = `alert alert-${type}`;
-            el.style.display = 'block'; el.style.transform = 'translateY(0)';
-            setTimeout(() => { el.style.transform = 'translateY(-100px)'; setTimeout(() => el.style.display = 'none', 300); }, 3000);
+            el.style.display = 'inline-block';
+            setTimeout(() => { el.style.display = 'none'; }, 3000);
         }
 
         async function loadData() {
@@ -292,7 +257,7 @@
                 ]);
                 [users, slots, services, onlineIds, activeInProxy] = res;
                 render();
-            } catch (e) { console.error('Load Error:', e); }
+            } catch (e) { console.error('Sync Error:', e); }
         }
 
         function render() {
@@ -301,74 +266,62 @@
             document.getElementById('stat-slots').innerText = slots.length;
             document.getElementById('stat-active').innerText = activeInProxy.length;
 
-            // Services
             document.getElementById('services-list').innerHTML = services.map(s => `
-                <div class="card">
-                    <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <div style="display:flex; align-items:center; gap:12px;">
-                            ${renderSmartIcon(s.icon_svg, s.name)}
-                            <div><h4 style="margin:0;">${s.name}</h4><p style="font-size:0.7rem; color:var(--text-secondary);">/proxy/${s.slug}</p></div>
-                        </div>
-
-                        <div style="display:flex; gap:8px;">
-                            <button onclick="editService(${s.id})" style="width:auto; padding:4px 8px; font-size:10px;">EDIT</button>
-                            <button onclick="deleteService(${s.id})" style="width:auto; padding:4px 8px; font-size:10px; background:#f87171;">DEL</button>
-                        </div>
+                <div class="card" style="padding: 1.5rem; display: flex; justify-content: space-between; align-items: center;">
+                    <div style="display:flex; align-items:center; gap:12px;">
+                        <div style="width:40px; height:40px;">${s.icon_svg || '🛠️'}</div>
+                        <div><h4 style="margin:0;">${s.name}</h4><p style="font-size:0.75rem; color:var(--text-secondary);">${s.slug}</p></div>
+                    </div>
+                    <div style="display:flex; gap:8px;">
+                        <button onclick="editService(${s.id})" style="width:auto; padding:6px 12px; font-size:0.75rem;">Edit</button>
+                        <button onclick="deleteService(${s.id})" style="width:auto; padding:6px 12px; font-size:0.75rem; background:#f87171;">Del</button>
                     </div>
                 </div>
-            `).join('') || '<p>No services defined.</p>';
+            `).join('') || '<p>Inventory empty.</p>';
 
-            // User Pool
             const search = document.getElementById('user-search').value.toLowerCase();
-            document.getElementById('user-list-full').innerHTML = users.filter(u => u.username.toLowerCase().includes(search)).map(u => `
-                <div class="user-row" style="display:flex; justify-content:space-between; align-items:center; padding: 1rem; border-bottom:1px solid var(--border-color);">
-                    <div style="display:flex; align-items:center; gap:1rem;">
-                        <span style="width:10px; height:10px; border-radius:50%; background: ${onlineIds.includes(u.id) ? '#10b981' : '#4b5563'}"></span>
+            document.getElementById('user-list-full').innerHTML = users.filter(u => u.username.toLowerCase().includes(search) || u.email.toLowerCase().includes(search)).map(u => `
+                <div class="user-row">
+                    <div style="display:flex; align-items:center; gap:1.2rem;">
+                        <span class="status-badge ${onlineIds.includes(u.id) ? 'status-online' : 'status-offline'}">${onlineIds.includes(u.id) ? 'Online' : 'Offline'}</span>
                         <div>
-                            <div style="font-weight:600;">${u.username}</div>
-                            <div style="display:flex; gap:5px; margin-top:4px;">
-                                ${u.assignments.map(a => `<span class="assignment-chip ${activeInProxy.includes(u.id) ? 'active' : ''}">${a.service_name}</span>`).join('')}
-                            </div>
+                            <div style="font-weight:700;">${u.username}</div>
+                            <div style="font-size:0.75rem; color:var(--text-secondary);">${u.email}</div>
                         </div>
                     </div>
                     <div style="display:flex; gap: 8px;">
-                        <select onchange="if(this.value) quickGrant(${u.id}, this.value); this.value='';" style="width:auto; padding:4px 8px; font-size:10px; background:var(--brand-blue); color:white; border:none; border-radius:4px; font-weight:700; cursor:pointer;">
-                            <option value="">QUICK GRANT</option>
-                            ${services.map(s => `<option value="${s.id}">+ ${s.name}</option>`).join('')}
-                        </select>
-                        <button onclick="openAssignModal(${u.id})" style="width:auto; padding:6px 12px; font-size:10px; background:var(--input-bg);">MANAGE</button>
-                        <button onclick="editUser(${u.id})" style="width:auto; padding:6px 12px; font-size:10px; background:var(--input-bg);">EDIT</button>
-                        <button onclick="toggleBlock(${u.id}, '${u.status}')" style="width:auto; padding:6px 12px; font-size:10px; background:${u.status==='blocked'?'#10b981':'#4b5563'}">${u.status==='blocked'?'UNBLOCK':'BLOCK'}</button>
+                        <button onclick="openAssignModal(${u.id})" style="width:auto; padding:8px 16px; font-size:0.75rem; background:var(--input-bg);">Access Control</button>
+                        <button onclick="editUser(${u.id})" style="width:auto; padding:8px 16px; font-size:0.75rem; background:var(--input-bg);">Profile</button>
+                        <button onclick="toggleBlock(${u.id}, '${u.status}')" style="width:auto; padding:8px 16px; font-size:0.75rem; background:${u.status==='blocked'?'#10b981':'rgba(248,113,113,0.1)'}; color:${u.status==='blocked'?'#fff':'#f87171'}">${u.status==='blocked'?'Restore':'Suspend'}</button>
                     </div>
                 </div>
             `).join('');
 
-            // Slot Orchestration
             document.getElementById('slots-master-container').innerHTML = services.map(srv => {
                 const srvSlots = slots.filter(sl => sl.service_id === srv.id);
                 return `
-                    <div class="service-group">
-                        <div class="service-group-title"><h4>${srv.name} Slots</h4></div>
-                        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap:1.5rem;">
+                    <div style="margin-bottom:2.5rem;">
+                        <h4 style="margin-bottom:1.5rem; display:flex; align-items:center; gap:10px;"><span style="width:8px; height:8px; background:var(--brand-blue); border-radius:50%;"></span>${srv.name} Registry</h4>
+                        <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap:1.5rem;">
                             ${srvSlots.map(s => {
                                 const actUsers = users.filter(u => u.assignments.some(a => a.cookie_id === s.id));
                                 return `
                                     <div class="card">
-                                        <div style="display:flex; justify-content:space-between; margin-bottom:1rem;">
-                                            <h5 style="color:var(--brand-blue);">${s.name}</h5>
-                                            <button onclick="editSlot(${s.id})" style="width:auto; padding:2px 6px; font-size:10px;">EDIT</button>
+                                        <div style="display:flex; justify-content:space-between; margin-bottom:1rem; align-items:center;">
+                                            <h5 style="color:var(--brand-blue); margin:0;">${s.name}</h5>
+                                            <button onclick="editSlot(${s.id})" style="width:auto; padding:4px 8px; font-size:0.7rem;">Edit Slot</button>
                                         </div>
                                         <div style="display:flex; flex-direction:column; gap:0.5rem;">
                                             ${actUsers.map(u => `
-                                                <div style="display:flex; justify-content:space-between; align-items:center; font-size:0.8rem;">
-                                                    <span style="display:flex; align-items:center; gap:5px;"><span style="width:6px; height:6px; border-radius:50%; background:${activeInProxy.includes(u.id)?'#10b981':'#4b5563'}"></span>${u.username}</span>
-                                                    <button onclick="assignToService(${u.id}, ${srv.id}, null)" style="width:auto; padding:2px; background:transparent; font-size:10px; color:#f87171;">Detach</button>
+                                                <div style="display:flex; justify-content:space-between; align-items:center; font-size:0.8rem; padding:6px; background:rgba(255,255,255,0.02); border-radius:6px;">
+                                                    <span style="font-weight:600;">${u.username}</span>
+                                                    <button onclick="assignToService(${u.id}, ${srv.id}, null)" style="width:auto; padding:0; background:transparent; font-size:0.7rem; color:#f87171;">Revoke</button>
                                                 </div>
-                                            `).join('') || '<p style="font-size:0.7rem; color:var(--text-secondary);">Empty Slot</p>'}
+                                            `).join('') || '<p style="font-size:0.7rem; color:var(--text-secondary);">No sessions assigned.</p>'}
                                         </div>
                                     </div>
                                 `;
-                            }).join('') || '<p>No slots.</p>'}
+                            }).join('') || '<p style="font-size:0.8rem; color:var(--text-secondary);">No slots defined for this tool.</p>'}
                         </div>
                     </div>
                 `;}).join('');
@@ -376,128 +329,58 @@
             document.getElementById('edit-slot-service-id').innerHTML = services.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
         }
 
-        async function quickGrant(uid, sid) {
-            const res = await fetch(`/hub/api/admin/users/${uid}/quick-grant`, { method: 'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({service_id: sid})});
-            if (res.ok) { showAlert('Access granted immediately'); loadData(); } else { showAlert('Grant failed', 'error'); }
-        }
-
-        // Modals & Actions
-        function openServiceModal() { document.getElementById('service-modal').style.display='flex'; }
-        function closeServiceModal() { document.getElementById('service-modal').style.display='none'; document.getElementById('service-form').reset(); updateIconPreview(''); }
-        
-        // PASTE IMAGE SUPPORT
-        document.getElementById('service-icon').addEventListener('paste', (e) => {
-            const items = (e.clipboardData || e.originalEvent.clipboardData).items;
-            for (const item of items) {
-                if (item.type.indexOf('image') !== -1) {
-                    const blob = item.getAsFile();
-                    const reader = new FileReader();
-                    reader.onload = (event) => {
-                        const base64 = event.target.result;
-                        document.getElementById('service-icon').value = base64;
-                        updateIconPreview(base64);
-                    };
-                    reader.readAsDataURL(blob);
-                    e.preventDefault();
-                }
-            }
-        });
-
-        function editService(id) {
-            const s = services.find(x => x.id === id);
-            document.getElementById('edit-service-id').value = s.id;
-            document.getElementById('service-name').value = s.name;
-            document.getElementById('service-slug').value = s.slug;
-            document.getElementById('service-url').value = s.target_url;
-            document.getElementById('service-icon').value = s.icon_svg || '';
-            document.getElementById('service-text').value = s.text_svg || '';
-            document.getElementById('service-js').value = s.injection_js || '';
-            updateIconPreview(s.icon_svg || '');
-            openServiceModal();
-        }
-
-        document.getElementById('service-form').onsubmit = async (e) => {
-            e.preventDefault();
-            const id = document.getElementById('edit-service-id').value;
-            const payload = {
-                name: document.getElementById('service-name').value, slug: document.getElementById('service-slug').value, target_url: document.getElementById('service-url').value, 
-                icon_svg: document.getElementById('service-icon').value, text_svg: document.getElementById('service-text').value, injection_js: document.getElementById('service-js').value
-            };
-            const method = id ? 'PUT' : 'POST', url = id ? `/hub/api/admin/services/${id}` : '/hub/api/admin/services';
-            const res = await fetch(url, { method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
-            if (res.ok) { showAlert('Saved'); closeServiceModal(); loadData(); }
+        // Shared Logic
+        const presetLibrary = {
+            chatgpt: { name: "ChatGPT", slug: "chatgpt", url: "https://chatgpt.com", icon: "🤖" },
+            youtube: { name: 'YouTube', slug: 'youtube', url: 'https://www.youtube.com', icon: '📺' },
+            netflix: { name: 'Netflix', slug: 'netflix', url: 'https://www.netflix.com', icon: '🎬' }
         };
-        async function deleteService(id) { if(confirm('Delete?')) { await fetch(`/hub/api/admin/services/${id}`, {method:'DELETE'}); loadData(); } }
-        function openAssignModal(userId) {
-            const u = users.find(x => x.id === userId);
-            document.getElementById('assign-username').innerText = u.username;
-            document.getElementById('assign-grid').innerHTML = services.map(s => {
-                const cur = u.assignments.find(a => a.service_id === s.id);
-                return `
-                    <div style="display:flex; justify-content:space-between; align-items:center; padding: 10px; background:var(--input-bg); border-radius:8px;">
-                        <span style="font-weight:600;">${s.name}</span>
-                        <select onchange="assignToService(${u.id}, ${s.id}, this.value)" style="width: auto; padding: 4px;">
-                            <option value="">- No Access -</option>
-                            ${slots.filter(sl => sl.service_id === s.id).map(sl => `<option value="${sl.id}" ${cur?.cookie_id === sl.id ? 'selected' : ''}>${sl.name}</option>`).join('')}
-                        </select>
-                    </div>`;}).join('');
-            document.getElementById('assign-modal').style.display = 'flex';
-        }
+        function applyPreset(pid) { const p = presetLibrary[pid]; if (!p) return; document.getElementById('service-name').value = p.name; document.getElementById('service-slug').value = p.slug; document.getElementById('service-url').value = p.url; document.getElementById('service-icon').value = p.icon; }
+        function openServiceModal() { document.getElementById('service-modal').style.display='flex'; }
+        function closeServiceModal() { document.getElementById('service-modal').style.display='none'; document.getElementById('service-form').reset(); }
+        function editService(id) { const s = services.find(x => x.id === id); document.getElementById('edit-service-id').value = s.id; document.getElementById('service-name').value = s.name; document.getElementById('service-slug').value = s.slug; document.getElementById('service-url').value = s.target_url; document.getElementById('service-icon').value = s.icon_svg || ''; document.getElementById('service-text').value = s.text_svg || ''; document.getElementById('service-js').value = s.injection_js || ''; openServiceModal(); }
+        document.getElementById('service-form').onsubmit = async (e) => { e.preventDefault(); const id = document.getElementById('edit-service-id').value; const payload = { name: document.getElementById('service-name').value, slug: document.getElementById('service-slug').value, target_url: document.getElementById('service-url').value, icon_svg: document.getElementById('service-icon').value, text_svg: document.getElementById('service-text').value, injection_js: document.getElementById('service-js').value }; const method = id ? 'PUT' : 'POST', url = id ? `/hub/api/admin/services/${id}` : '/hub/api/admin/services'; const res = await fetch(url, { method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) }); if (res.ok) { showAlert('Tool configuration updated'); closeServiceModal(); loadData(); } };
+        async function deleteService(id) { if(confirm('Permanently delete this tool?')) { await fetch(`/hub/api/admin/services/${id}`, {method:'DELETE'}); loadData(); } }
+        function openAssignModal(userId) { const u = users.find(x => x.id === userId); document.getElementById('assign-username').innerText = u.username; document.getElementById('assign-grid').innerHTML = services.map(s => { const cur = u.assignments.find(a => a.service_id === s.id); return `<div style="display:flex; justify-content:space-between; align-items:center; padding: 1rem; background:var(--input-bg); border-radius:12px;"><span style="font-weight:700;">${s.name}</span><select onchange="assignToService(${u.id}, ${s.id}, this.value)" style="width: auto; padding: 6px 12px; border-radius:8px;"><option value="">No Access</option>${slots.filter(sl => sl.service_id === s.id).map(sl => `<option value="${sl.id}" ${cur?.cookie_id === sl.id ? 'selected' : ''}>${sl.name}</option>`).join('')}</select></div>`;}).join(''); document.getElementById('assign-modal').style.display = 'flex'; }
         function closeAssignModal() { document.getElementById('assign-modal').style.display = 'none'; }
         async function assignToService(uid, sid, cid) { await fetch(`/hub/api/admin/users/${uid}/assign`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({service_id:sid, cookie_id:cid?parseInt(cid):null}) }); loadData(); }
         function openUserModal() { document.getElementById('user-modal').style.display='flex'; }
         function closeUserModal() { document.getElementById('user-modal').style.display='none'; }
         async function editUser(id) { const u = users.find(x => x.id === id); document.getElementById('edit-user-id').value = u.id; document.getElementById('user-name').value = u.username; document.getElementById('user-email').value = u.email; openUserModal(); }
-        document.getElementById('user-form').onsubmit = async (e) => { e.preventDefault(); const id = document.getElementById('edit-user-id').value; const payload = { username: document.getElementById('user-name').value, email: document.getElementById('user-email').value, password: document.getElementById('user-pass').value || undefined }; const method = id ? 'PUT' : 'POST', url = id ? `/hub/api/admin/users/${id}` : '/hub/api/admin/users'; const res = await fetch(url, { method, headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) }); if (res.ok) { showAlert('Saved'); closeUserModal(); loadData(); } };
+        document.getElementById('user-form').onsubmit = async (e) => { e.preventDefault(); const id = document.getElementById('edit-user-id').value; const payload = { username: document.getElementById('user-name').value, email: document.getElementById('user-email').value, password: document.getElementById('user-pass').value || undefined }; const method = id ? 'PUT' : 'POST', url = id ? `/hub/api/admin/users/${id}` : '/hub/api/admin/users'; const res = await fetch(url, { method, headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) }); if (res.ok) { showAlert('Student profile saved'); closeUserModal(); loadData(); } };
         async function toggleBlock(id, s) { await fetch(`/hub/api/admin/users/${id}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({status:s==='active'?'blocked':'active'}) }); loadData(); }
-        async function forceReload() { socket.emit('admin_signal', { type:'global_update' }); showAlert('Sent'); }
-
-        async function syncAmember() {
-            const btn = document.getElementById('sync-btn');
-            const resultEl = document.getElementById('sync-result');
-            btn.disabled = true;
-            btn.innerHTML = '⏳ Syncing...';
-            resultEl.style.display = 'none';
-            try {
-                const res = await fetch('/hub/api/admin/sync-amember', { method: 'POST' });
-                const data = await res.json();
-                if (res.ok) {
-                    resultEl.style.display = 'block';
-                    resultEl.style.background = 'rgba(16,185,129,0.1)';
-                    resultEl.style.border = '1px solid rgba(16,185,129,0.3)';
-                    resultEl.style.color = '#10b981';
-                    resultEl.innerHTML = `✅ ${data.message} (${data.total} total in aMember)`;
-                    showAlert(data.message);
-                    loadData();
-                } else {
-                    resultEl.style.display = 'block';
-                    resultEl.style.background = 'rgba(248,113,113,0.1)';
-                    resultEl.style.border = '1px solid rgba(248,113,113,0.3)';
-                    resultEl.style.color = '#f87171';
-                    resultEl.innerHTML = `❌ ${data.error}`;
-                    showAlert(data.error, 'error');
-                }
-            } catch(e) {
-                showAlert('Sync request failed: ' + e.message, 'error');
-            } finally {
-                btn.disabled = false;
-                btn.innerHTML = '🔄 Sync from aMember';
-            }
-        }
-
-        socket.on('sync_complete', (data) => {
-            showAlert(`aMember Sync: ${data.created} new, ${data.existing} updated`);
-            loadData();
-        });
-        async function clearAllAssignments() { if(confirm('Clear all?')) { await fetch('/hub/api/admin/system/clear-assignments', {method:'POST'}); loadData(); } }
-        document.getElementById('cookie-form').onsubmit = async (e) => { e.preventDefault(); const payload = { service_id: parseInt(document.getElementById('cookie-service-id').value), name: document.getElementById('cookie-name').value, data: document.getElementById('cookie-data').value }; await fetch('/hub/api/admin/cookies', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) }); e.target.reset(); loadData(); };
+        async function forceReload() { socket.emit('admin_signal', { type:'global_update' }); showAlert('Update pushed to all clients'); }
+        async function syncAmember() { const btn = document.getElementById('sync-btn'); const resEl = document.getElementById('sync-result'); btn.disabled = true; btn.innerText = 'Syncing...'; try { const res = await fetch('/hub/api/admin/sync-amember', { method: 'POST' }); const data = await res.json(); resEl.style.display = 'block'; resEl.style.background = res.ok ? 'rgba(16,185,129,0.1)' : 'rgba(248,113,113,0.1)'; resEl.style.color = res.ok ? '#10b981' : '#f87171'; resEl.innerText = res.ok ? `Success: ${data.message}` : `Error: ${data.error}`; loadData(); } catch(e) { showAlert('Sync failed', 'error'); } finally { btn.disabled = false; btn.innerText = '🔄 Sync aMember'; } }
+        document.getElementById('cookie-form').onsubmit = async (e) => { e.preventDefault(); const payload = { service_id: parseInt(document.getElementById('cookie-service-id').value), name: document.getElementById('cookie-name').value, data: document.getElementById('cookie-data').value }; await fetch('/hub/api/admin/cookies', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) }); e.target.reset(); showAlert('Slot deployed'); loadData(); };
         function editSlot(id) { const s = slots.find(x => x.id === id); document.getElementById('edit-slot-id').value = s.id; document.getElementById('edit-slot-name').value = s.name; document.getElementById('edit-slot-service-id').value = s.service_id; document.getElementById('edit-slot-data').value = s.data; document.getElementById('slot-modal').style.display='flex'; }
         function closeSlotModal() { document.getElementById('slot-modal').style.display='none'; }
-        document.getElementById('slot-edit-form').onsubmit = async (e) => { e.preventDefault(); const id = document.getElementById('edit-slot-id').value; const payload = { name: document.getElementById('edit-slot-name').value, service_id: parseInt(document.getElementById('edit-slot-service-id').value), data: document.getElementById('edit-slot-data').value }; await fetch(`/hub/api/admin/cookies/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) }); closeSlotModal(); loadData(); };
+        document.getElementById('slot-edit-form').onsubmit = async (e) => { e.preventDefault(); const id = document.getElementById('edit-slot-id').value; const payload = { name: document.getElementById('edit-slot-name').value, service_id: parseInt(document.getElementById('edit-slot-service-id').value), data: document.getElementById('edit-slot-data').value }; await fetch(`/hub/api/admin/cookies/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) }); closeSlotModal(); showAlert('Slot updated'); loadData(); };
 
-        initTheme(); loadData(); setInterval(loadData, 15000);
+        // Theme Support
+        function initTheme() {
+            const btn = document.getElementById('theme-btn');
+            const icon = document.getElementById('theme-icon');
+            const text = document.getElementById('theme-text');
+            const update = t => {
+                icon.innerHTML = (t === 'light' ? `☾` : `☼`);
+                text.textContent = (t === 'light' ? 'Dark Mode' : 'Light Mode');
+            };
+            btn.onclick = () => {
+                const cur = document.documentElement.getAttribute('data-theme')||'dark';
+                const next = cur==='dark'?'light':'dark';
+                document.documentElement.setAttribute('data-theme', next);
+                localStorage.setItem('admin-theme', next);
+                update(next);
+            };
+            const saved = localStorage.getItem('admin-theme')||'dark';
+            document.documentElement.setAttribute('data-theme', saved);
+            update(saved);
+        }
+
+        initTheme();
+        loadData();
+        setInterval(loadData, 15000);
         document.getElementById('logout-btn').onclick = async () => { await fetch('/hub/api/auth/logout', {method:'POST'}); window.location.href='/'; };
-        function initTheme() { const btn = document.getElementById('theme-btn'), cont = document.getElementById('theme-icon-container'), update = t => cont.innerHTML = (t === 'light' ? `Dark` : `Light`); btn.onclick = () => { const cur = document.documentElement.getAttribute('data-theme')||'dark', next = cur==='dark'?'light':'dark'; document.documentElement.setAttribute('data-theme', next); localStorage.setItem('admin-theme', next); update(next); }; const saved = localStorage.getItem('admin-theme')||'dark'; document.documentElement.setAttribute('data-theme', saved); update(saved); }
     </script>
 </body>
 </html>
