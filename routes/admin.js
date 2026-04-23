@@ -227,16 +227,36 @@ router.post('/sync-amember', async (req, res) => {
             }
         }
 
-        console.log(`[aMember Sync] Complete: ${created} created, ${existing} updated, ${errors} errors`);
+        // --- PURGE STEP: Remove users from Hub that no longer exist in aMember ---
+        const amEmails = amUsers.map(u => u.email).filter(Boolean);
+        const amLogins = amUsers.map(u => u.login).filter(Boolean);
+        
+        // Get all users from Hub who are NOT admins
+        const hubUsers = await query('SELECT id, email, username FROM users WHERE role != "admin"');
+        let deleted = 0;
+        
+        for (const hubUser of hubUsers) {
+            // If the user's email AND username are both missing from the latest aMember list, they are deleted
+            const existsInAm = amEmails.includes(hubUser.email) || amLogins.includes(hubUser.username);
+            
+            if (!existsInAm) {
+                console.log(`[aMember Sync] Purging deleted user: ${hubUser.email || hubUser.username}`);
+                await run('DELETE FROM users WHERE id = ?', [hubUser.id]);
+                deleted++;
+            }
+        }
+
+        console.log(`[aMember Sync] Complete: ${created} created, ${existing} updated, ${deleted} purged, ${errors} errors`);
 
         // Notify all admins in real-time
         const io = req.app.get('io');
-        if (io) io.to('admins').emit('sync_complete', { created, existing });
+        if (io) io.to('admins').emit('sync_complete', { created, existing, deleted });
 
         res.json({
-            message: `Sync complete! ${created} new users imported, ${existing} existing users updated.`,
+            message: `Sync complete! ${created} new users, ${existing} updated, ${deleted} removed.`,
             created,
             existing,
+            deleted,
             errors,
             total: amUsers.length
         });
