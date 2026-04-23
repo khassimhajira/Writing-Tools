@@ -96,85 +96,79 @@ function runMigrations() {
         const stealthJS = `
 <script id="proxy-stealth">
 (function(){
-    // --- 1. Immediate CSS injection (blocks elements BEFORE they render) ---
+    // --- 1. Robust CSS (Standard Selectors Only) ---
     var s = document.createElement('style');
     s.id = 'stealth-hide';
     s.textContent = [
-        /* Sidebar account/pricing/settings links */
+        /* Known ID/Class selectors */
         '[data-sidebar="menu"] a[href*="account"]',
         '[data-sidebar="menu"] a[href*="pricing"]',
         '[data-sidebar="menu"] a[href*="settings"]',
-        'a[href*="/account"]',
-        'a[href*="/pricing"]',
-        'a[href*="/settings"]',
-        'a[href*="/billing"]',
-        'a[href*="/plan"]',
-        /* Sidebar Section Labels */
-        'div:has(> span:contains("Account"))',
-        'div:has(> span:contains("Account")) + a',
-        'div:has(> h3:contains("Account"))',
-        /* Breadcrumbs and Headers */
-        '.breadcrumb:has(a[href*="account"])',
-        'div:has(> h2:contains("Account"))',
-        'h3:contains("Account")',
-        'h2:contains("Account")',
-        '.text-2xl.font-bold:contains("Account")',
-        /* Account Page Specifics (Name/Email) */
-        'div:has(> p:contains("UsmanGurmeet"))',
-        'p:contains("gurmeet_usman@mentora.uno")',
-        '.flex.items-center.gap-4:has(.rounded-full)',
-        /* Avatar / profile buttons */
-        'button:has(span[data-slot="avatar"])',
-        'button:has(img[data-slot="avatar-image"])',
-        'button:has(img[alt="avatar"])',
-        'button:has(img[alt="user"])',
-        'button:has(.rounded-full)',
-        /* Sidebar footer (usually has account info) */
-        'div[data-sidebar="footer"]',
+        '[data-sidebar="menu"] a[href*="billing"]',
         '[data-sidebar="footer"]',
-        /* Intercom / support chat widgets */
         '.intercom-launcher',
         '#intercom-container',
-        '#intercom-frame',
-        'iframe[name="intercom-launcher-frame"]',
-        'iframe[name="intercom-notifications-frame"]',
-        'div.intercom-lightweight-app',
-        /* Upgrade / plan banners */
-        '[class*="upgrade"]',
-        '[class*="Upgrade"]',
-        'a[href*="upgrade"]',
-        'button[class*="upgrade" i]',
-        /* Profile dropdown / user menu */
-        '[class*="user-menu"]',
-        '[class*="UserMenu"]',
-        '[class*="profile-menu"]',
-        '[class*="ProfileMenu"]',
-        '[class*="account-menu"]',
-        '[class*="AccountMenu"]',
-        /* Billing / subscription links */
-        'a[href*="billing"]',
-        'a[href*="subscription"]',
-        'a[href*="plan"]'
-    ].join(',') + ' { display: none !important; visibility: hidden !important; opacity: 0 !important; height: 0 !important; overflow: hidden !important; pointer-events: none !important; }';
+        /* Hide entire account page content if navigated to */
+        'main:has(h2)', 
+        '.breadcrumb',
+        '.flex.items-center.gap-4:has(.rounded-full)'
+    ].join(',') + ' { display: none !important; visibility: hidden !important; opacity: 0 !important; }';
     document.head.appendChild(s);
 
-    // --- 2. MutationObserver to catch late-rendered elements ---
+    // --- 2. Powerful JS Hider (Handles text-based matching) ---
+    function hideSensitiveElements() {
+        // Hide by text content
+        const keywords = ['Account', 'Pricing', 'Billing', 'Subscription', 'Upgrade', 'Settings', 'UsmanGurmeet', 'gurmeet_usman'];
+        
+        // Target sidebar labels and headers
+        const tags = ['span', 'h3', 'h2', 'a', 'p', 'div', 'button'];
+        tags.forEach(tag => {
+            document.querySelectorAll(tag).forEach(el => {
+                if (keywords.some(kw => el.textContent.includes(kw))) {
+                    // Check if it's a menu item or header
+                    if (el.textContent.length < 50) { 
+                        el.style.display = 'none';
+                        el.style.visibility = 'hidden';
+                        // If it's a sidebar label, hide the parent link/container too
+                        if (el.closest('a')) el.closest('a').style.display = 'none';
+                        if (el.closest('li')) el.closest('li').style.display = 'none';
+                    }
+                }
+            });
+        });
+
+        // Hide avatars and profile icons
+        document.querySelectorAll('img[src*="avatar"], [class*="avatar"], [data-slot*="avatar"]').forEach(el => {
+            const container = el.closest('button') || el.closest('div');
+            if (container) container.style.display = 'none';
+        });
+    }
+
+    // --- 3. MutationObserver to catch dynamic React renders ---
     var observer = new MutationObserver(function(mutations) {
+        hideSensitiveElements();
         mutations.forEach(function(m) {
             m.addedNodes.forEach(function(node) {
-                if (node.nodeType !== 1) return;
-                // Hide intercom frames that appear later
-                if (node.tagName === 'IFRAME' && (node.name||'').includes('intercom')) {
-                    node.style.display = 'none';
-                }
-                // Hide any dynamically added intercom container
-                if (node.classList && (node.classList.contains('intercom-lightweight-app') || node.id === 'intercom-container')) {
-                    node.style.display = 'none';
+                if (node.nodeType === 1) {
+                    if (node.tagName === 'IFRAME' && (node.name||'').includes('intercom')) node.style.display = 'none';
                 }
             });
         });
     });
+    
     observer.observe(document.documentElement, { childList: true, subtree: true });
+    
+    // Initial run
+    hideSensitiveElements();
+
+    // Periodic sweep for SPA navigation
+    setInterval(hideSensitiveElements, 1000);
+
+    // Anti-detection
+    try { Object.defineProperty(navigator, 'webdriver', { get: () => undefined }); } catch(e) {}
+})();
+</script>
+`;
 
     // --- 3. Anti-detection ---
     try {
