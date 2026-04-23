@@ -170,19 +170,6 @@ function runMigrations() {
 </script>
 `;
 
-    // --- 3. Anti-detection ---
-    try {
-        Object.defineProperty(navigator, 'webdriver', { get: function(){ return undefined; } });
-    } catch(e) {}
-
-    // --- 4. Periodic sweep (safety net for SPA route changes) ---
-    setInterval(function(){
-        document.querySelectorAll('#intercom-container, .intercom-launcher, .intercom-lightweight-app, iframe[name*="intercom"]').forEach(function(el){ el.style.display='none'; });
-    }, 2000);
-})();
-</script>
-`;
-
         db.get(`SELECT id FROM services WHERE slug = 'stealth'`, (err, row) => {
             if (!row) {
                 db.run(`INSERT INTO services (name, slug, target_url, icon_svg, text_svg, injection_js) VALUES (?, ?, ?, ?, ?, ?)`,
