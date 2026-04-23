@@ -142,14 +142,47 @@ router.get('/services', async (req, res) => {
 });
 
 
-        // 5. If they have access in aMember but aren't in Hub yet -> AUTO-CREATE THEM
+// Silent Login from aMember Pro (SSO)
+router.get('/am-login', async (req, res) => {
+    const { email, username } = req.query;
+    const amemberSessionId = req.cookies.amember_nr; 
+    
+    let identifier = email || username;
+    let amUser = null;
+
+    try {
+        const { verifyAmemberSession, verifyAmemberUser } = require('../amember');
+
+        // 1. Try Session-based Login
+        if (amemberSessionId) {
+            amUser = await verifyAmemberSession(amemberSessionId);
+            if (amUser) {
+                identifier = amUser.email;
+            }
+        }
+
+        // 2. Fallback to Email/Username
+        if (!amUser && !identifier) {
+            return res.status(401).send('Access Denied: Please log in to aMember first.');
+        }
+
+        // 3. Find user in Hub DB
+        let user = await get('SELECT id, role, status FROM users WHERE email = ? OR username = ?', [identifier, identifier]);
+        
+        // 4. Verify access in aMember
+        if (!amUser) {
+            const hasAccess = await verifyAmemberUser(identifier);
+            if (!hasAccess) {
+                return res.status(403).send(`Access Denied: No subscription found for "${identifier}".`);
+            }
+        }
+
+        // 5. AUTO-CREATE THEM IF MISSING
         if (!user) {
-            console.log(`[SSO] User ${identifier} has access but is missing from Hub. Creating account...`);
-            
-            // Get full user details from aMember to create Hub account
+            console.log(`[SSO] Auto-creating Hub account for: ${identifier}`);
             const { getAmemberUsers } = require('../amember');
             const amUsers = await getAmemberUsers();
-            const amUserFull = amUsers.find(u => u.email === identifier || u.username === identifier);
+            const amUserFull = amUsers.find(u => u.email === identifier || u.username === identifier || u.login === identifier);
 
             if (amUserFull) {
                 const { run } = require('../database');
@@ -157,15 +190,12 @@ router.get('/services', async (req, res) => {
                     'INSERT INTO users (username, email, role, status) VALUES (?, ?, ?, ?)',
                     [amUserFull.username, amUserFull.email, 'user', 'active']
                 );
-                // Fetch the newly created user
                 user = await get('SELECT id, role, status FROM users WHERE email = ?', [amUserFull.email]);
-            } else {
-                return res.status(401).send(`User "${identifier}" verified in aMember but failed to sync. Please try again or contact support.`);
             }
         }
 
-        if (user.status === 'blocked') {
-            return res.status(403).send('Your account is suspended.');
+        if (!user || user.status === 'blocked') {
+            return res.status(403).send('Access Denied or Account Suspended.');
         }
 
         // 6. Log In
@@ -176,11 +206,10 @@ router.get('/services', async (req, res) => {
             maxAge: 7 * 24 * 60 * 60 * 1000 
         });
 
-        console.log(`[SSO] User ${identifier} logged in.`);
         res.redirect('/dashboard');
     } catch(e) {
-        console.error('[SSO] Fatal Error:', e);
-        res.status(500).send('SSO Login Error: ' + e.message);
+        console.error('[SSO] Error:', e);
+        res.status(500).send('Login Error. Please try again.');
     }
 });
 
