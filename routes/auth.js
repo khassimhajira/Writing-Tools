@@ -136,13 +136,17 @@ router.get('/services', async (req, res) => {
             services = await query(`
                 SELECT s.* FROM services s
                 JOIN user_assignments ua ON s.id = ua.service_id
-                WHERE ua.user_id = ? AND ua.cookie_id IS NOT NULL`, [verified.id]);
+                WHERE ua.user_id = ?`, [verified.id]);
         }
 
         // Add expiry date to each service
         const servicesWithExpiry = await Promise.all(services.map(async (s) => {
-            const expiry = await getAmemberExpiry(user.email, s.product_id);
-            return { ...s, expiry_date: expiry };
+            try {
+                const expiry = await getAmemberExpiry(user.email, s.product_id);
+                return { ...s, expiry_date: expiry };
+            } catch (err) {
+                return { ...s, expiry_date: null };
+            }
         }));
 
         res.json(servicesWithExpiry);
