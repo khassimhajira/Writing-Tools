@@ -142,4 +142,49 @@ router.get('/services', async (req, res) => {
 });
 
 
+// Silent Login from aMember Pro (SSO)
+router.get('/am-login', async (req, res) => {
+    const { email } = req.query;
+    if (!email) return res.redirect('https://app.scholargenie.org/login');
+
+    try {
+        // Find user by email in Hub DB
+        const user = await get('SELECT id, role, status FROM users WHERE email = ?', [email]);
+        
+        if (!user) {
+            console.log(`[SSO] User ${email} not found in Hub. Redirecting to login.`);
+            return res.redirect('https://app.scholargenie.org/login');
+        }
+
+        // SECURITY CHECK: Verify they still have active access in aMember
+        const { verifyAmemberUser } = require('../amember');
+        const hasAccess = await verifyAmemberUser(email);
+        if (!hasAccess) {
+            console.log(`[SSO] User ${email} exists but HAS NO ACTIVE ACCESS in aMember.`);
+            return res.status(403).send('Your subscription has expired. Please renew at app.scholargenie.org');
+        }
+
+        if (user.status === 'blocked') {
+            return res.status(403).send('Your account is suspended.');
+        }
+
+        // Generate Hub Token
+        const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
+        
+        // Set Cookie
+        res.cookie('stealth_hub_token', token, { 
+            httpOnly: true, 
+            secure: process.env.NODE_ENV === 'production',
+            maxAge: 7 * 24 * 60 * 60 * 1000 
+        });
+
+        // Redirect to Dashboard
+        console.log(`[SSO] User ${email} auto-logged in.`);
+        res.redirect('/dashboard');
+    } catch(e) {
+        console.error('[SSO] Error during am-login:', e);
+        res.redirect('https://app.scholargenie.org/login');
+    }
+});
+
 module.exports = { router, JWT_SECRET };

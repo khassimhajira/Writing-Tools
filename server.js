@@ -56,7 +56,19 @@ io.on('connection', (socket) => {
 app.use(cookieParser());
 
 // Static Files & Pages
-app.get('/dashboard', (req, res) => res.sendFile(path.join(__dirname, 'public', 'dashboard.html')));
+app.get('/', (req, res) => res.redirect('/dashboard'));
+
+app.get('/dashboard', (req, res) => {
+    const token = req.cookies.stealth_hub_token;
+    if (!token) return res.redirect('https://app.scholargenie.org/login');
+    
+    try {
+        jwt.verify(token, JWT_SECRET);
+        res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
+    } catch(e) {
+        res.redirect('https://app.scholargenie.org/login');
+    }
+});
 
 app.get('/admin', (req, res) => {
     const token = req.cookies.stealth_hub_token;
