@@ -177,18 +177,18 @@ async function syncAmemberUsers() {
     }
 }
 
-async function verifyAmemberUser(email) {
+async function verifyAmemberUser(identifier) {
     if (process.env.AMEMBER_ENABLE !== 'true' || !pool) return false;
 
     try {
         const prefix = amemberConfig.prefix;
-        // Check if user exists AND has active access
+        // Check if user exists (by email or username) AND has active access
         const [users] = await pool.execute(
             `SELECT u.user_id FROM ${prefix}user u
              JOIN ${prefix}access a ON u.user_id = a.user_id
-             WHERE u.email = ? AND (a.expire_date >= CURDATE() OR a.expire_date IS NULL)
+             WHERE (u.email = ? OR u.login = ?) AND (a.expire_date >= CURDATE() OR a.expire_date IS NULL)
              LIMIT 1`,
-            [email]
+            [identifier, identifier]
         );
         return users.length > 0;
     } catch (e) {

@@ -144,46 +144,52 @@ router.get('/services', async (req, res) => {
 
 // Silent Login from aMember Pro (SSO)
 router.get('/am-login', async (req, res) => {
-    const { email } = req.query;
-    if (!email) return res.redirect('https://app.scholargenie.org/login');
+    const { email, username } = req.query;
+    
+    // BREAK REDIRECT LOOP: If no email/username, show error instead of redirecting
+    if (!email && !username) {
+        return res.status(400).send('Missing account identifier. aMember must send an email or username.');
+    }
 
     try {
-        // Find user by email in Hub DB
-        const user = await get('SELECT id, role, status FROM users WHERE email = ?', [email]);
+        const identifier = email || username;
+        console.log(`[SSO] Attempting login for: ${identifier}`);
+
+        // 1. Try to find user in Hub DB
+        let user = await get('SELECT id, role, status FROM users WHERE email = ? OR username = ?', [identifier, identifier]);
         
-        if (!user) {
-            console.log(`[SSO] User ${email} not found in Hub. Redirecting to login.`);
-            return res.redirect('https://app.scholargenie.org/login');
+        // 2. If not found in Hub, check aMember directly
+        const { verifyAmemberUser } = require('../amember');
+        const hasAccess = await verifyAmemberUser(identifier);
+
+        if (!hasAccess) {
+            return res.status(403).send(`Access Denied: No active subscription found for "${identifier}" in aMember Pro.`);
         }
 
-        // SECURITY CHECK: Verify they still have active access in aMember
-        const { verifyAmemberUser } = require('../amember');
-        const hasAccess = await verifyAmemberUser(email);
-        if (!hasAccess) {
-            console.log(`[SSO] User ${email} exists but HAS NO ACTIVE ACCESS in aMember.`);
-            return res.status(403).send('Your subscription has expired. Please renew at app.scholargenie.org');
+        // 3. If they have access in aMember but aren't in Hub yet, we need to sync
+        if (!user) {
+            console.log(`[SSO] User ${identifier} has access but is missing from Hub. Running emergency sync...`);
+            // Here we could trigger a specific sync, but for now we'll ask admin to sync first
+            return res.status(401).send(`User "${identifier}" found in aMember but not synced to Hub. Please click "Sync" in Admin Panel once.`);
         }
 
         if (user.status === 'blocked') {
             return res.status(403).send('Your account is suspended.');
         }
 
-        // Generate Hub Token
+        // 4. Generate Token & Log In
         const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
-        
-        // Set Cookie
         res.cookie('stealth_hub_token', token, { 
             httpOnly: true, 
             secure: process.env.NODE_ENV === 'production',
             maxAge: 7 * 24 * 60 * 60 * 1000 
         });
 
-        // Redirect to Dashboard
-        console.log(`[SSO] User ${email} auto-logged in.`);
+        console.log(`[SSO] User ${identifier} successfully logged in.`);
         res.redirect('/dashboard');
     } catch(e) {
-        console.error('[SSO] Error during am-login:', e);
-        res.redirect('https://app.scholargenie.org/login');
+        console.error('[SSO] Fatal Error:', e);
+        res.status(500).send('SSO Login Error: ' + e.message);
     }
 });
 
