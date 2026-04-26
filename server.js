@@ -491,9 +491,9 @@ async function autoSyncAmember() {
         const amUsers = await syncAmemberUsers();
         if (!amUsers || amUsers.length === 0) return;
 
-        const service = await get("SELECT id FROM services WHERE slug = 'stealth'");
-        
         // 1. Update/Add Users
+        const allServices = await query('SELECT id, slug FROM services');
+        
         for (const amUser of amUsers) {
             const email = amUser.email;
             if (!email) continue;
@@ -510,12 +510,14 @@ async function autoSyncAmember() {
                 await run('UPDATE users SET password_hash = ? WHERE id = ?', [amUser.pass, hubUser.id]);
             }
 
-            // Auto-assign StealthWriter
-            if (service && hubUser.id) {
-                const existingAssignment = await get('SELECT id FROM user_assignments WHERE user_id = ? AND service_id = ?', [hubUser.id, service.id]);
-                if (!existingAssignment) {
-                    const cookie = await get('SELECT id FROM cookies WHERE service_id = ? LIMIT 1', [service.id]);
-                    await run('INSERT OR IGNORE INTO user_assignments (user_id, service_id, cookie_id) VALUES (?, ?, ?)', [hubUser.id, service.id, cookie ? cookie.id : null]);
+            // --- AUTO-ASSIGN ALL SERVICES ---
+            for (const service of allServices) {
+                if (hubUser.id) {
+                    const existingAssignment = await get('SELECT id FROM user_assignments WHERE user_id = ? AND service_id = ?', [hubUser.id, service.id]);
+                    if (!existingAssignment) {
+                        const cookie = await get('SELECT id FROM cookies WHERE service_id = ? LIMIT 1', [service.id]);
+                        await run('INSERT OR IGNORE INTO user_assignments (user_id, service_id, cookie_id) VALUES (?, ?, ?)', [hubUser.id, service.id, cookie ? cookie.id : null]);
+                    }
                 }
             }
         }
@@ -569,31 +571,33 @@ async function autoSyncAmember() {
                     const { get, run } = require('./database');
                     const amUsers = await syncAmemberUsers();
                     if (amUsers && amUsers.length > 0) {
-                        const service = await get("SELECT id FROM services WHERE slug = 'stealth'");
-                        let created = 0, existing = 0;
-                        for (const amUser of amUsers) {
-                            const email = amUser.email;
-                            if (!email) continue;
-                            let hubUser = await get('SELECT id FROM users WHERE email = ?', [email]);
-                            if (!hubUser) {
-                                const result = await run(
-                                    'INSERT INTO users (username, email, password_hash, role, status) VALUES (?, ?, ?, ?, ?)',
-                                    [amUser.login || amUser.name_f || `user_${amUser.user_id}`, email, amUser.pass, 'user', 'active']
-                                );
-                                hubUser = { id: result.lastID };
-                                created++;
-                            } else {
-                                await run('UPDATE users SET password_hash = ? WHERE id = ?', [amUser.pass, hubUser.id]);
-                                existing++;
-                            }
-                            if (service) {
-                                const existingAssignment = await get('SELECT id FROM user_assignments WHERE user_id = ? AND service_id = ?', [hubUser.id, service.id]);
-                                if (!existingAssignment) {
-                                    const cookie = await get('SELECT id FROM cookies WHERE service_id = ? LIMIT 1', [service.id]);
-                                    await run('INSERT OR IGNORE INTO user_assignments (user_id, service_id, cookie_id) VALUES (?, ?, ?)', [hubUser.id, service.id, cookie ? cookie.id : null]);
-                                }
+                    const allServices = await query('SELECT id FROM services');
+                    let created = 0, existing = 0;
+                    for (const amUser of amUsers) {
+                        const email = amUser.email;
+                        if (!email) continue;
+                        let hubUser = await get('SELECT id FROM users WHERE email = ?', [email]);
+                        if (!hubUser) {
+                            const result = await run(
+                                'INSERT INTO users (username, email, password_hash, role, status) VALUES (?, ?, ?, ?, ?)',
+                                [amUser.login || amUser.name_f || `user_${amUser.user_id}`, email, amUser.pass, 'user', 'active']
+                            );
+                            hubUser = { id: result.lastID };
+                            created++;
+                        } else {
+                            await run('UPDATE users SET password_hash = ? WHERE id = ?', [amUser.pass, hubUser.id]);
+                            existing++;
+                        }
+                        
+                        // Auto-assign ALL services
+                        for (const service of allServices) {
+                            const existingAssignment = await get('SELECT id FROM user_assignments WHERE user_id = ? AND service_id = ?', [hubUser.id, service.id]);
+                            if (!existingAssignment) {
+                                const cookie = await get('SELECT id FROM cookies WHERE service_id = ? LIMIT 1', [service.id]);
+                                await run('INSERT OR IGNORE INTO user_assignments (user_id, service_id, cookie_id) VALUES (?, ?, ?)', [hubUser.id, service.id, cookie ? cookie.id : null]);
                             }
                         }
+                    }
                         console.log(`[aMember Sync] Startup sync complete: ${created} created, ${existing} updated.`);
                     }
                 } catch (e) {

@@ -180,7 +180,7 @@ router.post('/sync-amember', async (req, res) => {
             return res.json({ message: 'No users found in aMember or aMember is disabled.', created: 0, existing: 0 });
         }
 
-        const service = await get("SELECT id FROM services WHERE slug = 'stealth'");
+        const allServices = await query('SELECT id FROM services');
         let created = 0, existing = 0, errors = 0;
 
         for (const amUser of amUsers) {
@@ -206,8 +206,8 @@ router.post('/sync-amember', async (req, res) => {
                     existing++;
                 }
 
-                // Auto-assign to StealthWriter service if not already
-                if (service) {
+                // --- AUTO-ASSIGN ALL SERVICES ---
+                for (const service of allServices) {
                     const existingAssignment = await get(
                         'SELECT id FROM user_assignments WHERE user_id = ? AND service_id = ?',
                         [hubUser.id, service.id]
