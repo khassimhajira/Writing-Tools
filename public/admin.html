@@ -173,6 +173,7 @@
                 <input type="hidden" id="edit-service-id">
                 <div class="form-group"><label>Tool Name</label><input type="text" id="service-name" required placeholder="ChatGPT"></div>
                 <div class="form-group"><label>URL Slug</label><input type="text" id="service-slug" required placeholder="chatgpt"></div>
+                <div class="form-group"><label>aMember Product ID</label><input type="text" id="service-amember-id" placeholder="e.g. 5"></div>
                 <div class="form-group" style="grid-column: 1 / -1;"><label>Target URL</label><input type="url" id="service-url" required placeholder="https://chat.openai.com"></div>
                 <div class="form-group" style="grid-column: 1 / -1;">
                     <label>Icon Preview</label>
@@ -307,7 +308,13 @@
                     <div style="display:flex; justify-content:space-between; align-items:center;">
                         <div style="display:flex; align-items:center; gap:12px;">
                             ${renderSmartIcon(s.icon_svg, s.name)}
-                            <div><h4 style="margin:0;">${s.name}</h4><p style="font-size:0.7rem; color:var(--text-secondary);">/proxy/${s.slug}</p></div>
+                            <div>
+                                <h4 style="margin:0;">${s.name}</h4>
+                                <div style="display:flex; gap:8px; align-items:center;">
+                                    <p style="font-size:0.7rem; color:var(--text-secondary); margin:0;">/proxy/${s.slug}</p>
+                                    ${s.amember_product_id ? `<span class="live-badge" style="font-size:0.5rem; color:var(--brand-blue); border-color:var(--brand-blue);">PID: ${s.amember_product_id}</span>` : ''}
+                                </div>
+                            </div>
                         </div>
 
                         <div style="display:flex; gap:8px;">
@@ -412,6 +419,7 @@
             document.getElementById('service-icon').value = s.icon_svg || '';
             document.getElementById('service-text').value = s.text_svg || '';
             document.getElementById('service-js').value = s.injection_js || '';
+            document.getElementById('service-amember-id').value = s.amember_product_id || '';
             updateIconPreview(s.icon_svg || '');
             openServiceModal();
         }
@@ -421,7 +429,8 @@
             const id = document.getElementById('edit-service-id').value;
             const payload = {
                 name: document.getElementById('service-name').value, slug: document.getElementById('service-slug').value, target_url: document.getElementById('service-url').value, 
-                icon_svg: document.getElementById('service-icon').value, text_svg: document.getElementById('service-text').value, injection_js: document.getElementById('service-js').value
+                icon_svg: document.getElementById('service-icon').value, text_svg: document.getElementById('service-text').value, injection_js: document.getElementById('service-js').value,
+                amember_product_id: document.getElementById('service-amember-id').value
             };
             const method = id ? 'PUT' : 'POST', url = id ? `/hub/api/admin/services/${id}` : '/hub/api/admin/services';
             const res = await fetch(url, { method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });

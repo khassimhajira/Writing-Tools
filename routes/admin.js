@@ -34,22 +34,22 @@ router.get('/services', async (req, res) => {
 
 // Add new service
 router.post('/services', async (req, res) => {
-    const { name, slug, target_url, icon_svg, text_svg, injection_js } = req.body;
+    const { name, slug, target_url, icon_svg, text_svg, injection_js, amember_product_id } = req.body;
     try {
-        await run(`INSERT INTO services (name, slug, target_url, icon_svg, text_svg, injection_js) 
-                   VALUES (?, ?, ?, ?, ?, ?)`, 
-                   [name, slug, target_url, icon_svg, text_svg, injection_js]);
+        await run(`INSERT INTO services (name, slug, target_url, icon_svg, text_svg, injection_js, amember_product_id) 
+                   VALUES (?, ?, ?, ?, ?, ?, ?)`, 
+                   [name, slug, target_url, icon_svg, text_svg, injection_js, amember_product_id]);
         res.status(201).json({ message: 'Service added' });
     } catch(e) { res.status(500).json({ error: 'Database error' }); }
 });
 
 // Update service
 router.put('/services/:id', async (req, res) => {
-    const { name, slug, target_url, icon_svg, text_svg, injection_js } = req.body;
+    const { name, slug, target_url, icon_svg, text_svg, injection_js, amember_product_id } = req.body;
     try {
-        await run(`UPDATE services SET name = ?, slug = ?, target_url = ?, icon_svg = ?, text_svg = ?, injection_js = ? 
+        await run(`UPDATE services SET name = ?, slug = ?, target_url = ?, icon_svg = ?, text_svg = ?, injection_js = ?, amember_product_id = ? 
                    WHERE id = ?`, 
-                   [name, slug, target_url, icon_svg, text_svg, injection_js, req.params.id]);
+                   [name, slug, target_url, icon_svg, text_svg, injection_js, amember_product_id, req.params.id]);
         res.json({ message: 'Service updated' });
     } catch(e) { res.status(500).json({ error: 'Database error' }); }
 });
@@ -180,7 +180,7 @@ router.post('/sync-amember', async (req, res) => {
             return res.json({ message: 'No users found in aMember or aMember is disabled.', created: 0, existing: 0 });
         }
 
-        const allServices = await query('SELECT id FROM services');
+        const allServices = await query('SELECT id, amember_product_id FROM services');
         let created = 0, existing = 0, errors = 0;
 
         for (const amUser of amUsers) {
@@ -206,19 +206,29 @@ router.post('/sync-amember', async (req, res) => {
                     existing++;
                 }
 
-                // --- AUTO-ASSIGN ALL SERVICES ---
+                // --- PRODUCT-BASED ASSIGNMENT ---
+                const userProducts = (amUser.product_ids || '').split(',').map(id => id.trim());
+
                 for (const service of allServices) {
-                    const existingAssignment = await get(
-                        'SELECT id FROM user_assignments WHERE user_id = ? AND service_id = ?',
-                        [hubUser.id, service.id]
-                    );
-                    if (!existingAssignment) {
-                        // Find first available cookie slot
-                        const cookie = await get('SELECT id FROM cookies WHERE service_id = ? LIMIT 1', [service.id]);
-                        await run(
-                            'INSERT OR IGNORE INTO user_assignments (user_id, service_id, cookie_id) VALUES (?, ?, ?)',
-                            [hubUser.id, service.id, cookie ? cookie.id : null]
+                    const mappedProductId = String(service.amember_product_id || '').trim();
+                    const hasAccessInAmember = mappedProductId ? userProducts.includes(mappedProductId) : true; // If no mapping, default to has_access check or grant all
+
+                    if (hasAccessInAmember) {
+                        const existingAssignment = await get(
+                            'SELECT id FROM user_assignments WHERE user_id = ? AND service_id = ?',
+                            [hubUser.id, service.id]
                         );
+                        if (!existingAssignment) {
+                            // Find first available cookie slot
+                            const cookie = await get('SELECT id FROM cookies WHERE service_id = ? LIMIT 1', [service.id]);
+                            await run(
+                                'INSERT OR IGNORE INTO user_assignments (user_id, service_id, cookie_id) VALUES (?, ?, ?)',
+                                [hubUser.id, service.id, cookie ? cookie.id : null]
+                            );
+                        }
+                    } else {
+                        // User no longer has access to this specific product - REVOKE
+                        await run('DELETE FROM user_assignments WHERE user_id = ? AND service_id = ?', [hubUser.id, service.id]);
                     }
                 }
             } catch(userErr) {

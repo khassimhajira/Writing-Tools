@@ -164,7 +164,10 @@ async function syncAmemberUsers() {
             `SELECT u.user_id, u.login, u.email, u.pass, u.name_f, u.name_l,
              (SELECT COUNT(*) FROM ${prefix}access a 
               WHERE a.user_id = u.user_id 
-              AND (a.expire_date >= CURDATE() OR a.expire_date IS NULL)) as has_access
+              AND (a.expire_date >= CURDATE() OR a.expire_date IS NULL)) as has_access,
+             (SELECT GROUP_CONCAT(DISTINCT a.product_id) FROM ${prefix}access a 
+              WHERE a.user_id = u.user_id 
+              AND (a.expire_date >= CURDATE() OR a.expire_date IS NULL)) as product_ids
              FROM ${prefix}user u
              ORDER BY u.user_id ASC`
         );

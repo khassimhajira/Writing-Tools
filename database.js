@@ -31,7 +31,8 @@ function initializeDB() {
             target_url TEXT NOT NULL,
             icon_svg TEXT,
             text_svg TEXT,
-            injection_js TEXT
+            injection_js TEXT,
+            amember_product_id TEXT
         )`);
 
         // Cookies Table (Updated with service_id)
@@ -70,6 +71,7 @@ function initializeDB() {
         // Migration for existing DBs
         db.run(`ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'`, (err) => {});
         db.run(`ALTER TABLE cookies ADD COLUMN service_id INTEGER`, (err) => {});
+        db.run(`ALTER TABLE services ADD COLUMN amember_product_id TEXT`, (err) => {});
 
         // Data Migration / Initialization
         runMigrations();

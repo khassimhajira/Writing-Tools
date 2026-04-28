@@ -297,7 +297,10 @@ app.use(async (req, res, next) => {
         delete req.headers['sec-fetch-mode'];
         delete req.headers['sec-fetch-site'];
 
-        const isHtmlRequest = req.headers['accept']?.includes('text/html') || !targetPath.includes('.');
+        const isHtmlRequest = req.headers['accept']?.includes('text/html') || 
+                              req.headers['accept']?.includes('application/xhtml+xml') ||
+                              !targetPath.includes('.') || 
+                              targetPath.endsWith('/');
         
         const currentAgent = getProxyAgent(verified.id);
 
@@ -306,9 +309,9 @@ app.use(async (req, res, next) => {
             delete req.headers['accept-encoding']; // Strip only for HTML to allow injection
             proxy.web(req, res, { target: targetUrlObj.origin, selfHandleResponse: true, agent: currentAgent });
         } else {
-            req.shouldBufferResponse = false;
-            // Streaming mode for APIs (Fixes typing, buttons, and blank screens)
-            proxy.web(req, res, { target: targetUrlObj.origin, selfHandleResponse: false, agent: currentAgent });
+            req.shouldBufferResponse = true; // We now buffer almost everything to strip CSP properly
+            delete req.headers['accept-encoding']; 
+            proxy.web(req, res, { target: targetUrlObj.origin, selfHandleResponse: true, agent: currentAgent });
         }
 
 
@@ -384,8 +387,9 @@ proxy.on('proxyRes', (proxyRes, req, res) => {
                         try {
                             const locUrl = new URL(val);
                             const targetUrlObj = new URL(req.targetUrl);
-                            if (locUrl.host === targetUrlObj.host) {
-                                val = `/proxy/${slug}${locUrl.pathname}${locUrl.search}`;
+                            // Relaxed host matching to handle subdomains (e.g. app.writehuman.ai)
+                            if (locUrl.host === targetUrlObj.host || locUrl.host.endsWith('.' + targetUrlObj.host.replace('www.', ''))) {
+                                val = `/proxy/${slug}${locUrl.pathname}${locUrl.search}${locUrl.hash}`;
                             }
                         } catch(e) {}
                     }
@@ -430,7 +434,8 @@ proxy.on('proxyRes', (proxyRes, req, res) => {
                 'gstatic.com',
                 'googlevideo.com',
                 'ytimg.com',
-                'ggpht.com'
+                'ggpht.com',
+                'writehuman.ai'
             ];
 
             domainsToProxy.forEach(domain => {
@@ -498,7 +503,7 @@ async function autoSyncAmember() {
         if (!amUsers || amUsers.length === 0) return;
 
         // 1. Update/Add Users
-        const allServices = await query('SELECT id, slug FROM services');
+        const allServices = await query('SELECT id, slug, amember_product_id FROM services');
         
         for (const amUser of amUsers) {
             const email = amUser.email;
@@ -516,13 +521,22 @@ async function autoSyncAmember() {
                 await run('UPDATE users SET password_hash = ? WHERE id = ?', [amUser.pass, hubUser.id]);
             }
 
-            // --- AUTO-ASSIGN ALL SERVICES ---
+            // --- PRODUCT-BASED ASSIGNMENT ---
+            const userProducts = (amUser.product_ids || '').split(',').map(id => id.trim());
+
             for (const service of allServices) {
                 if (hubUser.id) {
-                    const existingAssignment = await get('SELECT id FROM user_assignments WHERE user_id = ? AND service_id = ?', [hubUser.id, service.id]);
-                    if (!existingAssignment) {
-                        const cookie = await get('SELECT id FROM cookies WHERE service_id = ? LIMIT 1', [service.id]);
-                        await run('INSERT OR IGNORE INTO user_assignments (user_id, service_id, cookie_id) VALUES (?, ?, ?)', [hubUser.id, service.id, cookie ? cookie.id : null]);
+                    const mappedProductId = String(service.amember_product_id || '').trim();
+                    const hasAccessInAmember = mappedProductId ? userProducts.includes(mappedProductId) : true;
+
+                    if (hasAccessInAmember) {
+                        const existingAssignment = await get('SELECT id FROM user_assignments WHERE user_id = ? AND service_id = ?', [hubUser.id, service.id]);
+                        if (!existingAssignment) {
+                            const cookie = await get('SELECT id FROM cookies WHERE service_id = ? LIMIT 1', [service.id]);
+                            await run('INSERT OR IGNORE INTO user_assignments (user_id, service_id, cookie_id) VALUES (?, ?, ?)', [hubUser.id, service.id, cookie ? cookie.id : null]);
+                        }
+                    } else {
+                        await run('DELETE FROM user_assignments WHERE user_id = ? AND service_id = ?', [hubUser.id, service.id]);
                     }
                 }
             }
@@ -577,7 +591,7 @@ async function autoSyncAmember() {
                     const { get, run } = require('./database');
                     const amUsers = await syncAmemberUsers();
                     if (amUsers && amUsers.length > 0) {
-                    const allServices = await query('SELECT id FROM services');
+                    const allServices = await query('SELECT id, amember_product_id FROM services');
                     let created = 0, existing = 0;
                     for (const amUser of amUsers) {
                         const email = amUser.email;
@@ -595,12 +609,20 @@ async function autoSyncAmember() {
                             existing++;
                         }
                         
-                        // Auto-assign ALL services
+                        // Product-based assignment
+                        const userProducts = (amUser.product_ids || '').split(',').map(id => id.trim());
                         for (const service of allServices) {
-                            const existingAssignment = await get('SELECT id FROM user_assignments WHERE user_id = ? AND service_id = ?', [hubUser.id, service.id]);
-                            if (!existingAssignment) {
-                                const cookie = await get('SELECT id FROM cookies WHERE service_id = ? LIMIT 1', [service.id]);
-                                await run('INSERT OR IGNORE INTO user_assignments (user_id, service_id, cookie_id) VALUES (?, ?, ?)', [hubUser.id, service.id, cookie ? cookie.id : null]);
+                            const mappedProductId = String(service.amember_product_id || '').trim();
+                            const hasAccessInAmember = mappedProductId ? userProducts.includes(mappedProductId) : true;
+                            
+                            if (hasAccessInAmember) {
+                                const existingAssignment = await get('SELECT id FROM user_assignments WHERE user_id = ? AND service_id = ?', [hubUser.id, service.id]);
+                                if (!existingAssignment) {
+                                    const cookie = await get('SELECT id FROM cookies WHERE service_id = ? LIMIT 1', [service.id]);
+                                    await run('INSERT OR IGNORE INTO user_assignments (user_id, service_id, cookie_id) VALUES (?, ?, ?)', [hubUser.id, service.id, cookie ? cookie.id : null]);
+                                }
+                            } else {
+                                await run('DELETE FROM user_assignments WHERE user_id = ? AND service_id = ?', [hubUser.id, service.id]);
                             }
                         }
                     }
