@@ -527,7 +527,7 @@ async function autoSyncAmember() {
             for (const service of allServices) {
                 if (hubUser.id) {
                     const mappedProductId = String(service.amember_product_id || '').trim();
-                    const hasAccessInAmember = mappedProductId ? userProducts.includes(mappedProductId) : true;
+                    const hasAccessInAmember = mappedProductId ? userProducts.includes(mappedProductId) : false;
 
                     if (hasAccessInAmember) {
                         const existingAssignment = await get('SELECT id FROM user_assignments WHERE user_id = ? AND service_id = ?', [hubUser.id, service.id]);
@@ -613,7 +613,7 @@ async function autoSyncAmember() {
                         const userProducts = (amUser.product_ids || '').split(',').map(id => id.trim());
                         for (const service of allServices) {
                             const mappedProductId = String(service.amember_product_id || '').trim();
-                            const hasAccessInAmember = mappedProductId ? userProducts.includes(mappedProductId) : true;
+                            const hasAccessInAmember = mappedProductId ? userProducts.includes(mappedProductId) : false;
                             
                             if (hasAccessInAmember) {
                                 const existingAssignment = await get('SELECT id FROM user_assignments WHERE user_id = ? AND service_id = ?', [hubUser.id, service.id]);

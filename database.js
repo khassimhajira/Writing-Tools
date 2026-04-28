@@ -179,8 +179,8 @@ function runMigrations() {
 
         db.get(`SELECT id FROM services WHERE slug = 'stealth'`, (err, row) => {
             if (!row) {
-                db.run(`INSERT INTO services (name, slug, target_url, icon_svg, text_svg, injection_js) VALUES (?, ?, ?, ?, ?, ?)`,
-                    ['StealthWriter', 'stealth', process.env.TARGET_URL || 'https://stealthwriter.ai', stealthIcon, stealthText, stealthJS], (err) => {
+                db.run(`INSERT INTO services (name, slug, target_url, icon_svg, text_svg, injection_js, amember_product_id) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                    ['StealthWriter', 'stealth', process.env.TARGET_URL || 'https://stealthwriter.ai', stealthIcon, stealthText, stealthJS, process.env.STEALTH_PRODUCT_ID || null], (err) => {
                         if (err) console.error('Migration Error (Service):', err);
                         else {
                             console.log('StealthWriter service initialized.');
