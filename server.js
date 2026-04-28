@@ -423,7 +423,23 @@ proxy.on('proxyRes', (proxyRes, req, res) => {
             let html = body.toString();
             
             // --- 4. Dynamic Link Rewriting ---
-            // Rewrite absolute URLs for known complex domains to go through our proxy-static
+            // Step A: Rewrite the TOOL'S OWN domain to go through /proxy/{slug}/ (authenticated, with cookies)
+            if (req.targetUrl) {
+                try {
+                    const targetUrlObj = new URL(req.targetUrl);
+                    const targetHost = targetUrlObj.host;
+                    const targetDomain = targetHost.replace(/^www\./, '');
+                    const slugMatch = req.originalUrl.match(/\/proxy\/([^\/]+)/);
+                    if (slugMatch) {
+                        const slug = slugMatch[1];
+                        // Rewrite https://writehuman.ai/path and //writehuman.ai/path to /proxy/writehuman/path
+                        const ownDomainRegex = new RegExp(`(https?:)?//([a-zA-Z0-9.-]*\\.)?${targetDomain.replace(/\./g, '\\.')}`, 'g');
+                        html = html.replace(ownDomainRegex, `/proxy/${slug}`);
+                    }
+                } catch(e) {}
+            }
+
+            // Step B: Rewrite 3RD PARTY CDN domains to go through /proxy-static/ (no cookies needed)
             const domainsToProxy = [
                 'chatgpt.com',
                 'openai.com',
@@ -439,8 +455,7 @@ proxy.on('proxyRes', (proxyRes, req, res) => {
                 'gstatic.com',
                 'googlevideo.com',
                 'ytimg.com',
-                'ggpht.com',
-                'writehuman.ai'
+                'ggpht.com'
             ];
 
             domainsToProxy.forEach(domain => {
