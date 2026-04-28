@@ -298,31 +298,29 @@ app.use(async (req, res, next) => {
         delete req.headers['sec-fetch-site'];
 
         // Determine if this is an HTML page request vs an API/asset/RSC request
-        // SPA routes like /app, /dashboard have no file extension — treat them as HTML
         const hasFileExtension = /\.[a-zA-Z0-9]{1,10}(\?|$)/.test(targetPath);
         const isApiCall = targetPath.includes('/api/') || targetPath.includes('/_next/data/');
         const acceptsHtml = req.headers['accept']?.includes('text/html') || req.headers['accept']?.includes('application/xhtml+xml');
         
-        // Next.js React Server Components (RSC) use streaming — MUST NOT buffer these
+        // Next.js RSC streaming — MUST NOT buffer
         const isRSC = req.headers['rsc'] === '1' || 
                       req.headers['next-router-state-tree'] ||
                       req.headers['next-router-prefetch'] ||
                       req.headers['next-url'];
         
-        const isHtmlRequest = !isRSC && (
-                              acceptsHtml || 
-                              targetPath === '/' || targetPath === '' ||
-                              (!hasFileExtension && !isApiCall));
+        // Only buffer if it's a genuine first-page HTML load (not RSC, not API, not asset)
+        const shouldBuffer = !isRSC && !isApiCall && !hasFileExtension && 
+                             (acceptsHtml || targetPath === '/' || targetPath === '');
         
         const currentAgent = getProxyAgent(verified.id);
 
-        if (isHtmlRequest) {
-            req.shouldBufferResponse = true; // Buffer to strip CSP and inject JS
+        if (shouldBuffer) {
+            req.shouldBufferResponse = true;
             delete req.headers['accept-encoding'];
             proxy.web(req, res, { target: targetUrlObj.origin, selfHandleResponse: true, agent: currentAgent });
         } else {
             req.shouldBufferResponse = false;
-            // Streaming mode for APIs, static assets, and RSC streams
+            // Streaming mode — CSP headers are stripped in proxyRes handler
             proxy.web(req, res, { target: targetUrlObj.origin, selfHandleResponse: false, agent: currentAgent });
         }
 
@@ -352,61 +350,73 @@ setInterval(() => {
 
 
 proxy.on('proxyRes', (proxyRes, req, res) => {
-    // ONLY handle response if we explicitly requested buffering (selfHandleResponse: true)
-    // AND the headers haven't already been flushed.
+    // --- ALWAYS strip security headers for ALL proxy responses (streamed AND buffered) ---
+    const headersToStrip = [
+        'content-security-policy',
+        'content-security-policy-report-only',
+        'x-frame-options',
+        'x-content-type-options',
+        'cross-origin-opener-policy',
+        'cross-origin-embedder-policy',
+        'cross-origin-resource-policy',
+        'permissions-policy',
+        'strict-transport-security',
+        'x-xss-protection'
+    ];
+    headersToStrip.forEach(h => { delete proxyRes.headers[h]; });
+
+    // Rewrite redirect Location headers for ALL responses
+    if (proxyRes.headers['location']) {
+        const slugMatch = req.originalUrl?.match(/\/proxy\/([^\/]+)/);
+        if (slugMatch) {
+            const slug = slugMatch[1];
+            let loc = proxyRes.headers['location'];
+            if (loc.startsWith('/')) {
+                proxyRes.headers['location'] = `/proxy/${slug}${loc}`;
+            } else if (loc.startsWith('http') && req.targetUrl) {
+                try {
+                    const locUrl = new URL(loc);
+                    const targetUrlObj = new URL(req.targetUrl);
+                    if (locUrl.host === targetUrlObj.host || locUrl.host.endsWith('.' + targetUrlObj.host.replace('www.', ''))) {
+                        proxyRes.headers['location'] = `/proxy/${slug}${locUrl.pathname}${locUrl.search}${locUrl.hash}`;
+                    }
+                } catch(e) {}
+            }
+        }
+    }
+
+    // For non-buffered (streamed) responses, we're done — http-proxy pipes the rest automatically
     if (!req.shouldBufferResponse || res.headersSent) return;
 
-    let body = [];
+    // Detect streaming HTML responses (Next.js App Router)
+    // If the response is chunked, pipe it through instead of buffering
+    const isStreamingResponse = proxyRes.headers['transfer-encoding'] === 'chunked' && 
+                                 !proxyRes.headers['content-length'];
+    const resContentType = (proxyRes.headers['content-type'] || '');
+    const isRSCResponse = resContentType.includes('text/x-component') || 
+                           resContentType.includes('application/octet-stream');
+    
+    if (isStreamingResponse || isRSCResponse) {
+        // Pipe the streaming response directly to the client
+        res.writeHead(proxyRes.statusCode, proxyRes.headers);
+        proxyRes.pipe(res);
+        return;
+    }
 
+    let body = [];
 
     proxyRes.on('data', chunk => body.push(chunk));
     proxyRes.on('end', () => {
         body = Buffer.concat(body);
         
-        // Remove restrictive security headers that cause 'Partial Loading' or Blocks
-        const headersToRemove = [
-            'content-security-policy',
-            'content-security-policy-report-only',
-            'x-frame-options',
-            'x-content-type-options',
-            'cross-origin-opener-policy',
-            'cross-origin-embedder-policy',
-            'cross-origin-resource-policy',
-            'permissions-policy',
-            'strict-transport-security',
-            'x-xss-protection'
-        ];
-
+        // Set headers for buffered responses (CSP already stripped above)
         Object.keys(proxyRes.headers).forEach(key => {
             const lowKey = key.toLowerCase();
             if (lowKey === 'set-cookie' || lowKey === 'cache-control' || lowKey === 'etag' || lowKey === 'content-length') {
-                return; // Handled separately or preserved
-            }
-            if (headersToRemove.includes(lowKey)) {
-                return; // Skip these headers
+                return;
             }
             
             let val = proxyRes.headers[key];
-            
-            // Rewrite Redirects
-            if (lowKey === 'location') {
-                const slugMatch = req.originalUrl.match(/\/proxy\/([^\/]+)/);
-                if (slugMatch) {
-                    const slug = slugMatch[1];
-                    if (val.startsWith('/')) {
-                        val = `/proxy/${slug}${val}`;
-                    } else if (val.startsWith('http')) {
-                        try {
-                            const locUrl = new URL(val);
-                            const targetUrlObj = new URL(req.targetUrl);
-                            // Relaxed host matching to handle subdomains (e.g. app.writehuman.ai)
-                            if (locUrl.host === targetUrlObj.host || locUrl.host.endsWith('.' + targetUrlObj.host.replace('www.', ''))) {
-                                val = `/proxy/${slug}${locUrl.pathname}${locUrl.search}${locUrl.hash}`;
-                            }
-                        } catch(e) {}
-                    }
-                }
-            }
             res.setHeader(key, val);
         });
 
@@ -423,8 +433,6 @@ proxy.on('proxyRes', (proxyRes, req, res) => {
 
 
         const contentType = proxyRes.headers['content-type'] || '';
-        delete res.removeHeader('X-Frame-Options');
-        delete res.removeHeader('Content-Security-Policy');
 
         if (contentType.includes('text/html')) {
             let html = body.toString();
