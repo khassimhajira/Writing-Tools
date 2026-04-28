@@ -230,4 +230,22 @@ async function verifyAmemberSession(session_id) {
     }
 }
 
-module.exports = { checkAmemberAuth, getAmemberUsers, syncAmemberUsers, verifyAmemberUser, verifyAmemberSession };
+async function getAmemberUserProducts(identifier) {
+    if (process.env.AMEMBER_ENABLE !== 'true' || !pool) return [];
+    try {
+        const prefix = amemberConfig.prefix;
+        const [rows] = await pool.execute(
+            `SELECT GROUP_CONCAT(DISTINCT a.product_id) as product_ids
+             FROM ${prefix}user u
+             JOIN ${prefix}access a ON u.user_id = a.user_id
+             WHERE (u.email = ? OR u.login = ?) AND (a.expire_date >= CURDATE() OR a.expire_date IS NULL)`,
+            [identifier, identifier]
+        );
+        return rows[0]?.product_ids ? rows[0].product_ids.split(',').map(id => id.trim()) : [];
+    } catch (e) {
+        console.error('[aMember Get Products] Error:', e.message);
+        return [];
+    }
+}
+
+module.exports = { checkAmemberAuth, getAmemberUsers, syncAmemberUsers, verifyAmemberUser, verifyAmemberSession, getAmemberUserProducts };

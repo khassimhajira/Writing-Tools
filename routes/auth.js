@@ -127,8 +127,32 @@ router.get('/services', async (req, res) => {
 
     try {
         const verified = jwt.verify(token, JWT_SECRET);
-        const { query } = require('../database');
-        
+        const { query, get, run } = require('../database');
+        const { getAmemberUserProducts } = require('../amember');
+
+        // --- SILENT SYNC FOR THIS USER ---
+        const user = await get('SELECT email, username FROM users WHERE id = ?', [verified.id]);
+        if (user) {
+            const amProducts = await getAmemberUserProducts(user.email || user.username);
+            const allServices = await query('SELECT id, amember_product_id FROM services');
+            
+            for (const service of allServices) {
+                const mappedProductId = String(service.amember_product_id || '').trim();
+                const hasAccess = mappedProductId ? amProducts.includes(mappedProductId) : false;
+
+                if (hasAccess) {
+                    const existing = await get('SELECT id FROM user_assignments WHERE user_id = ? AND service_id = ?', [verified.id, service.id]);
+                    if (!existing) {
+                        const cookie = await get('SELECT id FROM cookies WHERE service_id = ? LIMIT 1', [service.id]);
+                        await run('INSERT OR IGNORE INTO user_assignments (user_id, service_id, cookie_id) VALUES (?, ?, ?)', [verified.id, service.id, cookie ? cookie.id : null]);
+                    }
+                } else {
+                    // Revoke if they lost access
+                    await run('DELETE FROM user_assignments WHERE user_id = ? AND service_id = ?', [verified.id, service.id]);
+                }
+            }
+        }
+
         const services = await query(`
             SELECT s.name, s.slug, s.icon_svg, s.text_svg
             FROM user_assignments a
