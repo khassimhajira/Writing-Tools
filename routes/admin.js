@@ -38,7 +38,7 @@ router.post('/services', async (req, res) => {
     try {
         await run(`INSERT INTO services (name, slug, target_url, icon_svg, text_svg, injection_js, amember_product_id) 
                    VALUES (?, ?, ?, ?, ?, ?, ?)`, 
-                   [name, slug, target_url, icon_svg, text_svg, injection_js, amember_product_id || process.env.STEALTH_PRODUCT_ID || null]);
+                   [name, slug, target_url, icon_svg, text_svg, injection_js, amember_product_id || null]);
         res.status(201).json({ message: 'Service added' });
     } catch(e) { res.status(500).json({ error: 'Database error' }); }
 });

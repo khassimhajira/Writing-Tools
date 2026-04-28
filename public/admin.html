@@ -389,8 +389,16 @@
         }
 
         // Modals & Actions
-        function openServiceModal() { document.getElementById('service-modal').style.display='flex'; }
-        function closeServiceModal() { document.getElementById('service-modal').style.display='none'; document.getElementById('service-form').reset(); updateIconPreview(''); }
+        function openServiceModal() { 
+            document.getElementById('edit-service-id').value = ''; // CRITICAL: Clear ID for new tools
+            document.getElementById('service-modal').style.display='flex'; 
+        }
+        function closeServiceModal() { 
+            document.getElementById('edit-service-id').value = ''; // CRITICAL: Clear ID on close
+            document.getElementById('service-modal').style.display='none'; 
+            document.getElementById('service-form').reset(); 
+            updateIconPreview(''); 
+        }
         
         // PASTE IMAGE SUPPORT
         document.getElementById('service-icon').addEventListener('paste', (e) => {
