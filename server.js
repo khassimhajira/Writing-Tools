@@ -297,20 +297,25 @@ app.use(async (req, res, next) => {
         delete req.headers['sec-fetch-mode'];
         delete req.headers['sec-fetch-site'];
 
-        const isHtmlRequest = req.headers['accept']?.includes('text/html') || 
-                              req.headers['accept']?.includes('application/xhtml+xml') ||
+        // Determine if this is an HTML page request vs an API/asset request
+        // SPA routes like /app, /dashboard have no file extension — treat them as HTML
+        const hasFileExtension = /\.[a-zA-Z0-9]{1,10}(\?|$)/.test(targetPath);
+        const isApiCall = targetPath.includes('/api/') || targetPath.includes('/_next/data/');
+        const acceptsHtml = req.headers['accept']?.includes('text/html') || req.headers['accept']?.includes('application/xhtml+xml');
+        
+        const isHtmlRequest = acceptsHtml || 
                               targetPath === '/' || targetPath === '' ||
-                              (!targetPath.includes('.') && targetPath.endsWith('/'));
+                              (!hasFileExtension && !isApiCall);
         
         const currentAgent = getProxyAgent(verified.id);
 
         if (isHtmlRequest) {
-            req.shouldBufferResponse = true; // Tag for proxyRes handler
-            delete req.headers['accept-encoding']; // Strip only for HTML to allow injection
+            req.shouldBufferResponse = true; // Buffer to strip CSP and inject JS
+            delete req.headers['accept-encoding'];
             proxy.web(req, res, { target: targetUrlObj.origin, selfHandleResponse: true, agent: currentAgent });
         } else {
             req.shouldBufferResponse = false;
-            // Streaming mode for APIs (Fixes typing, buttons, and blank screens)
+            // Streaming mode for APIs and static assets
             proxy.web(req, res, { target: targetUrlObj.origin, selfHandleResponse: false, agent: currentAgent });
         }
 
