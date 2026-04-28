@@ -203,6 +203,17 @@
     <script src="/socket.io/socket.io.js"></script>
     <script>
         let socket = (typeof io !== 'undefined') ? io() : { on:()=>{}, emit:()=>{} };
+        // Authenticate socket as admin for real-time updates
+        const adminToken = document.cookie.split('; ').find(row => row.startsWith('stealth_hub_token='))?.split('=')[1];
+        if (adminToken) socket.emit('authenticate', adminToken);
+        
+        // Real-time sync: auto-refresh when background sync completes
+        socket.on('force_refresh', () => { 
+            console.log('[Real-time] Background sync completed, refreshing data...');
+            loadData(); 
+        });
+        socket.on('global_reload', () => loadData());
+
         let users = [], slots = [], services = [], onlineIds = [], activeInProxy = [];
 
         const presetLibrary = {
@@ -440,9 +451,13 @@
             e.preventDefault();
             const id = document.getElementById('edit-service-id').value;
             const payload = {
-                name: document.getElementById('service-name').value, slug: document.getElementById('service-slug').value, target_url: document.getElementById('service-url').value, 
-                icon_svg: document.getElementById('service-icon').value, text_svg: document.getElementById('service-text').value, injection_js: document.getElementById('service-js').value,
-                amember_product_id: document.getElementById('service-amember-id').value
+                name: document.getElementById('service-name').value.trim(), 
+                slug: document.getElementById('service-slug').value.trim(), 
+                target_url: document.getElementById('service-url').value.trim(), 
+                icon_svg: document.getElementById('service-icon').value, 
+                text_svg: document.getElementById('service-text').value, 
+                injection_js: document.getElementById('service-js').value,
+                amember_product_id: document.getElementById('service-amember-id').value.trim()
             };
             const method = id ? 'PUT' : 'POST', url = id ? `/hub/api/admin/services/${id}` : '/hub/api/admin/services';
             const res = await fetch(url, { method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
@@ -516,7 +531,7 @@
         function closeSlotModal() { document.getElementById('slot-modal').style.display='none'; }
         document.getElementById('slot-edit-form').onsubmit = async (e) => { e.preventDefault(); const id = document.getElementById('edit-slot-id').value; const payload = { name: document.getElementById('edit-slot-name').value, service_id: parseInt(document.getElementById('edit-slot-service-id').value), data: document.getElementById('edit-slot-data').value }; await fetch(`/hub/api/admin/cookies/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) }); closeSlotModal(); loadData(); };
 
-        initTheme(); loadData(); setInterval(loadData, 15000);
+        initTheme(); loadData();
         document.getElementById('logout-btn').onclick = async () => { await fetch('/hub/api/auth/logout', {method:'POST'}); window.location.href='/'; };
         function initTheme() { const btn = document.getElementById('theme-btn'), cont = document.getElementById('theme-icon-container'), update = t => cont.innerHTML = (t === 'light' ? `Dark` : `Light`); btn.onclick = () => { const cur = document.documentElement.getAttribute('data-theme')||'dark', next = cur==='dark'?'light':'dark'; document.documentElement.setAttribute('data-theme', next); localStorage.setItem('admin-theme', next); update(next); }; const saved = localStorage.getItem('admin-theme')||'dark'; document.documentElement.setAttribute('data-theme', saved); update(saved); }
     </script>

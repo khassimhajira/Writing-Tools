@@ -115,7 +115,7 @@
         function launchPortal(slug) {
             document.body.classList.add('portal-open');
             const frame = document.getElementById('portal-frame');
-            frame.src = '/proxy/' + slug;
+            frame.src = '/proxy/' + slug.trim();
             frame.style.display = 'block';
             document.getElementById('portal-exit').style.display = 'flex';
         }

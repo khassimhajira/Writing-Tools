@@ -34,24 +34,26 @@ router.get('/services', async (req, res) => {
 
 // Add new service
 router.post('/services', async (req, res) => {
-    const { name, slug, target_url, icon_svg, text_svg, injection_js, amember_product_id } = req.body;
+    const { name, target_url, icon_svg, text_svg, injection_js, amember_product_id } = req.body;
+    const slug = (req.body.slug || '').trim();
     try {
         await run(`INSERT INTO services (name, slug, target_url, icon_svg, text_svg, injection_js, amember_product_id) 
                    VALUES (?, ?, ?, ?, ?, ?, ?)`, 
                    [name, slug, target_url, icon_svg, text_svg, injection_js, amember_product_id || null]);
         res.status(201).json({ message: 'Service added' });
-    } catch(e) { res.status(500).json({ error: 'Database error' }); }
+    } catch(e) { res.status(500).json({ error: 'Database error: ' + e.message }); }
 });
 
 // Update service
 router.put('/services/:id', async (req, res) => {
-    const { name, slug, target_url, icon_svg, text_svg, injection_js, amember_product_id } = req.body;
+    const { name, target_url, icon_svg, text_svg, injection_js, amember_product_id } = req.body;
+    const slug = (req.body.slug || '').trim();
     try {
         await run(`UPDATE services SET name = ?, slug = ?, target_url = ?, icon_svg = ?, text_svg = ?, injection_js = ?, amember_product_id = ? 
                    WHERE id = ?`, 
                    [name, slug, target_url, icon_svg, text_svg, injection_js, amember_product_id, req.params.id]);
         res.json({ message: 'Service updated' });
-    } catch(e) { res.status(500).json({ error: 'Database error' }); }
+    } catch(e) { res.status(500).json({ error: 'Database error: ' + e.message }); }
 });
 
 // Delete service

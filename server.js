@@ -9,7 +9,7 @@ const jwt = require('jsonwebtoken');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 
 // MVC Modules
-const { get, db } = require('./database');
+const { get, run, query, db } = require('./database');
 const { router: authRouter, JWT_SECRET } = require('./routes/auth');
 const adminRouter = require('./routes/admin');
 
@@ -299,8 +299,8 @@ app.use(async (req, res, next) => {
 
         const isHtmlRequest = req.headers['accept']?.includes('text/html') || 
                               req.headers['accept']?.includes('application/xhtml+xml') ||
-                              !targetPath.includes('.') || 
-                              targetPath.endsWith('/');
+                              targetPath === '/' || targetPath === '' ||
+                              (!targetPath.includes('.') && targetPath.endsWith('/'));
         
         const currentAgent = getProxyAgent(verified.id);
 
@@ -309,9 +309,9 @@ app.use(async (req, res, next) => {
             delete req.headers['accept-encoding']; // Strip only for HTML to allow injection
             proxy.web(req, res, { target: targetUrlObj.origin, selfHandleResponse: true, agent: currentAgent });
         } else {
-            req.shouldBufferResponse = true; // We now buffer almost everything to strip CSP properly
-            delete req.headers['accept-encoding']; 
-            proxy.web(req, res, { target: targetUrlObj.origin, selfHandleResponse: true, agent: currentAgent });
+            req.shouldBufferResponse = false;
+            // Streaming mode for APIs (Fixes typing, buttons, and blank screens)
+            proxy.web(req, res, { target: targetUrlObj.origin, selfHandleResponse: false, agent: currentAgent });
         }
 
 
@@ -555,14 +555,16 @@ async function autoSyncAmember() {
         }
         
         console.log('[Background Sync] Complete.');
+        // Notify admin panels in real-time to refresh their data
+        io.to('admins').emit('force_refresh');
     } catch (e) {
         console.error('[Background Sync] Failed:', e.message);
     }
 }
 
-// Start background sync: Initial run after 10s, then every 5 minutes
+// Start background sync: Initial run after 10s, then every 60 seconds for near-real-time
 setTimeout(autoSyncAmember, 10000);
-setInterval(autoSyncAmember, 5 * 60 * 1000);
+setInterval(autoSyncAmember, 60 * 1000);
 
 // Error Handling & Graceful Shutdown
 process.on('unhandledRejection', (reason, promise) => {

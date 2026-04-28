@@ -206,8 +206,9 @@ async function verifyAmemberSession(session_id) {
     try {
         const prefix = amemberConfig.prefix;
         // 1. Find the session in aMember DB
+        // aMember 6.x uses 'id' as the session column, not 'session_id'
         const [sessions] = await pool.execute(
-            `SELECT user_id FROM ${prefix}session WHERE session_id = ? LIMIT 1`,
+            `SELECT user_id FROM ${prefix}session WHERE id = ? LIMIT 1`,
             [session_id]
         );
 
