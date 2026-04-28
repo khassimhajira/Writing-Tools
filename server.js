@@ -297,15 +297,22 @@ app.use(async (req, res, next) => {
         delete req.headers['sec-fetch-mode'];
         delete req.headers['sec-fetch-site'];
 
-        // Determine if this is an HTML page request vs an API/asset request
+        // Determine if this is an HTML page request vs an API/asset/RSC request
         // SPA routes like /app, /dashboard have no file extension — treat them as HTML
         const hasFileExtension = /\.[a-zA-Z0-9]{1,10}(\?|$)/.test(targetPath);
         const isApiCall = targetPath.includes('/api/') || targetPath.includes('/_next/data/');
         const acceptsHtml = req.headers['accept']?.includes('text/html') || req.headers['accept']?.includes('application/xhtml+xml');
         
-        const isHtmlRequest = acceptsHtml || 
+        // Next.js React Server Components (RSC) use streaming — MUST NOT buffer these
+        const isRSC = req.headers['rsc'] === '1' || 
+                      req.headers['next-router-state-tree'] ||
+                      req.headers['next-router-prefetch'] ||
+                      req.headers['next-url'];
+        
+        const isHtmlRequest = !isRSC && (
+                              acceptsHtml || 
                               targetPath === '/' || targetPath === '' ||
-                              (!hasFileExtension && !isApiCall);
+                              (!hasFileExtension && !isApiCall));
         
         const currentAgent = getProxyAgent(verified.id);
 
@@ -315,7 +322,7 @@ app.use(async (req, res, next) => {
             proxy.web(req, res, { target: targetUrlObj.origin, selfHandleResponse: true, agent: currentAgent });
         } else {
             req.shouldBufferResponse = false;
-            // Streaming mode for APIs and static assets
+            // Streaming mode for APIs, static assets, and RSC streams
             proxy.web(req, res, { target: targetUrlObj.origin, selfHandleResponse: false, agent: currentAgent });
         }
 
