@@ -100,7 +100,7 @@
 
         <!-- SERVICES TAB -->
         <div id="view-services" class="tab-pane">
-            <div class="col-header"><h2>Services Hub</h2><button onclick="openServiceModal()" style="width:auto;">Add New Tool</button></div>
+            <div class="col-header"><h2>Services Hub</h2><button onclick="openServiceModal(false)" style="width:auto;">Add New Tool</button></div>
             <div id="services-list" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap:1.5rem;"></div>
         </div>
 
@@ -389,12 +389,16 @@
         }
 
         // Modals & Actions
-        function openServiceModal() { 
-            document.getElementById('edit-service-id').value = ''; // CRITICAL: Clear ID for new tools
+        function openServiceModal(isEdit = false) { 
+            if (!isEdit) {
+                document.getElementById('edit-service-id').value = ''; 
+                document.getElementById('service-form').reset();
+                updateIconPreview('');
+            }
             document.getElementById('service-modal').style.display='flex'; 
         }
         function closeServiceModal() { 
-            document.getElementById('edit-service-id').value = ''; // CRITICAL: Clear ID on close
+            document.getElementById('edit-service-id').value = '';
             document.getElementById('service-modal').style.display='none'; 
             document.getElementById('service-form').reset(); 
             updateIconPreview(''); 
@@ -429,7 +433,7 @@
             document.getElementById('service-js').value = s.injection_js || '';
             document.getElementById('service-amember-id').value = s.amember_product_id || '';
             updateIconPreview(s.icon_svg || '');
-            openServiceModal();
+            openServiceModal(true); // Pass true to indicate it is an edit
         }
 
         document.getElementById('service-form').onsubmit = async (e) => {

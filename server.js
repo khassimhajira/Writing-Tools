@@ -560,9 +560,9 @@ async function autoSyncAmember() {
     }
 }
 
-// Start background sync: Initial run after 10s, then every 10 minutes
+// Start background sync: Initial run after 10s, then every 5 minutes
 setTimeout(autoSyncAmember, 10000);
-setInterval(autoSyncAmember, 10 * 60 * 1000);
+setInterval(autoSyncAmember, 5 * 60 * 1000);
 
 // Error Handling & Graceful Shutdown
 process.on('unhandledRejection', (reason, promise) => {
@@ -576,67 +576,6 @@ proxy.on('error', (err, req, res) => {
         res.end('Reverse Proxy Error: Could not reach target.');
     }
 });
-
-// --- AUTOMATIC AMEMBER SYNC ON STARTUP ---
-async function autoSyncAmember() {
-    if (process.env.AMEMBER_ENABLE === 'true') {
-        console.log('[aMember Sync] Starting automatic startup sync...');
-        try {
-            // Internal call to the sync logic (reusing logic from admin router would be complex, 
-            // so we'll just log that it's recommended to hit the sync button or wait for first login)
-            // Actually, let's just trigger a small delay then run it if database is ready
-            setTimeout(async () => {
-                try {
-                    const { syncAmemberUsers } = require('./amember');
-                    const { get, run } = require('./database');
-                    const amUsers = await syncAmemberUsers();
-                    if (amUsers && amUsers.length > 0) {
-                    const allServices = await query('SELECT id, amember_product_id FROM services');
-                    let created = 0, existing = 0;
-                    for (const amUser of amUsers) {
-                        const email = amUser.email;
-                        if (!email) continue;
-                        let hubUser = await get('SELECT id FROM users WHERE email = ?', [email]);
-                        if (!hubUser) {
-                            const result = await run(
-                                'INSERT INTO users (username, email, password_hash, role, status) VALUES (?, ?, ?, ?, ?)',
-                                [amUser.login || amUser.name_f || `user_${amUser.user_id}`, email, amUser.pass, 'user', 'active']
-                            );
-                            hubUser = { id: result.lastID };
-                            created++;
-                        } else {
-                            await run('UPDATE users SET password_hash = ? WHERE id = ?', [amUser.pass, hubUser.id]);
-                            existing++;
-                        }
-                        
-                        // Product-based assignment
-                        const userProducts = (amUser.product_ids || '').split(',').map(id => id.trim());
-                        for (const service of allServices) {
-                            const mappedProductId = String(service.amember_product_id || '').trim();
-                            const hasAccessInAmember = mappedProductId ? userProducts.includes(mappedProductId) : false;
-                            
-                            if (hasAccessInAmember) {
-                                const existingAssignment = await get('SELECT id FROM user_assignments WHERE user_id = ? AND service_id = ?', [hubUser.id, service.id]);
-                                if (!existingAssignment) {
-                                    const cookie = await get('SELECT id FROM cookies WHERE service_id = ? LIMIT 1', [service.id]);
-                                    await run('INSERT OR IGNORE INTO user_assignments (user_id, service_id, cookie_id) VALUES (?, ?, ?)', [hubUser.id, service.id, cookie ? cookie.id : null]);
-                                }
-                            } else {
-                                await run('DELETE FROM user_assignments WHERE user_id = ? AND service_id = ?', [hubUser.id, service.id]);
-                            }
-                        }
-                    }
-                        console.log(`[aMember Sync] Startup sync complete: ${created} created, ${existing} updated.`);
-                    }
-                } catch (e) {
-                    console.error('[aMember Sync] Startup sync failed:', e.message);
-                }
-            }, 5000); // 5 second delay to ensure DB is fully initialized
-        } catch (e) {
-            console.error('[aMember Sync] Startup sync error:', e);
-        }
-    }
-}
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
