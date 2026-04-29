@@ -388,16 +388,12 @@ proxy.on('proxyRes', (proxyRes, req, res) => {
     // For non-buffered (streamed) responses, we're done — http-proxy pipes the rest automatically
     if (!req.shouldBufferResponse || res.headersSent) return;
 
-    // Detect streaming HTML responses (Next.js App Router)
-    // If the response is chunked, pipe it through instead of buffering
-    const isStreamingResponse = proxyRes.headers['transfer-encoding'] === 'chunked' && 
-                                 !proxyRes.headers['content-length'];
+    // Only pipe through RSC-specific responses (not regular HTML)
     const resContentType = (proxyRes.headers['content-type'] || '');
     const isRSCResponse = resContentType.includes('text/x-component') || 
                            resContentType.includes('application/octet-stream');
     
-    if (isStreamingResponse || isRSCResponse) {
-        // Pipe the streaming response directly to the client
+    if (isRSCResponse) {
         res.writeHead(proxyRes.statusCode, proxyRes.headers);
         proxyRes.pipe(res);
         return;
