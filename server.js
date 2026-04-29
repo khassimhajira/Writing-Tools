@@ -405,6 +405,9 @@ proxy.on('proxyRes', (proxyRes, req, res) => {
     proxyRes.on('end', () => {
         body = Buffer.concat(body);
         
+        // Pass through the original status code (crucial for redirects like 308)
+        res.status(proxyRes.statusCode);
+
         // Set headers for buffered responses (CSP already stripped above)
         Object.keys(proxyRes.headers).forEach(key => {
             const lowKey = key.toLowerCase();
