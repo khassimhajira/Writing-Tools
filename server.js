@@ -826,7 +826,6 @@ proxy.on('proxyRes', (proxyRes, req, res) => {
         if (!req.shouldBufferResponse || res.headersSent) return;
 
         // Only pipe through RSC-specific responses (not regular HTML)
-        const resContentType = (proxyRes.headers['content-type'] || '');
         const isRSCResponse = resContentType.includes('text/x-component') || 
                                resContentType.includes('application/octet-stream');
         
