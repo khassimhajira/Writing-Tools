@@ -614,20 +614,6 @@ app.use(async (req, res, next) => {
                                 g.navigator.serviceWorker.register = () => new Promise(() => {});
                             }
 
-                            // Catch QuotaExceededError in localStorage
-                            const originalSetItem = g.localStorage.setItem;
-                            g.localStorage.setItem = function(key, value) {
-                                try {
-                                    originalSetItem.apply(this, arguments);
-                                } catch (e) {
-                                    if (e.name === 'QuotaExceededError') {
-                                        console.warn('[Hub Proxy] Suppressed QuotaExceededError for localStorage key:', key);
-                                    } else {
-                                        throw e;
-                                    }
-                                }
-                            };
-
                             // Dynamic Element Patcher
                             const _createElement = document.createElement;
                             document.createElement = function(tag) {
@@ -814,18 +800,11 @@ proxy.on('proxyRes', (proxyRes, req, res) => {
             }
         }
 
-        const resContentType = (proxyRes.headers['content-type'] || '');
-
-        // Fix SSE Buffering (prevent NGINX/LiteSpeed from holding back chat chunks)
-        if (resContentType.includes('text/event-stream')) {
-            proxyRes.headers['x-accel-buffering'] = 'no';
-            proxyRes.headers['cache-control'] = 'no-cache, no-transform';
-        }
-
         // For non-buffered (streamed) responses, we're done — http-proxy pipes the rest automatically
         if (!req.shouldBufferResponse || res.headersSent) return;
 
         // Only pipe through RSC-specific responses (not regular HTML)
+        const resContentType = (proxyRes.headers['content-type'] || '');
         const isRSCResponse = resContentType.includes('text/x-component') || 
                                resContentType.includes('application/octet-stream');
         
