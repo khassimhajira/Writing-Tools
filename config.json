@@ -1,0 +1,26 @@
+{
+  "accounts": [
+    {
+      "id": "account_1",
+      "name": "UsmanGurmeert Premium",
+      "cookies": "intercom-device-id-esc25l7u=c6efcd92-aa51-4b47-b3aa-6025a71dd4ae; __Secure-better-auth.session_token=KtEPYrLB45lLuj9A43V0UwZbzkTll8Kg.KwT2LrSTrzjYS1AgkNuLnUdGcW6ljz4gFdRu9sqia10%3D; __Secure-better-auth.session_data=eyJzZXNzaW9uIjp7InNlc3Npb24iOnsiZXhwaXJlc0F0IjoiMjAyNi0wNC0yM1QyMTowNzo1NC42NDNaIiwidG9rZW4iOiJLdEVQWXJMQjQ1bEx1ajlBNDNWMFV3WmJ6a1RsbDhLZyIsImNyZWF0ZWRBdCI6IjIwMjYtMDQtMTZUMjE6MDc6NTQuNjQ0WiIsInVwZGF0ZWRBdCI6IjIwMjYtMDQtMTZUMjE6MDc6NTQuNjQ0WiIsImlwQWRkcmVzcyI6IjIyMy4xMjMuNy42MCIsInVzZXJBZ2VudCI6Ik1vemlsbGEvNS4wIChXaW5kb3dzIE5UIDEwLjA7IFdpbjY0OyB4NjQpIEFwcGxlV2ViS2l0LzUzNy4zNiAoS0hUTUwsIGxpa2UgR2Vja28pIENocm9tZS8xNDYuMC4wLjAgU2FmYXJpLzUzNy4zNiIsInVzZXJJZCI6InU2ek81SFVyTmtKaG5aQllFNU1Va3A3WFhKZUMwQlJkIiwiaWQiOiI0eldJM2ZBYU9NVHBNdVVzTXZpamFXOGFaRU45eW5xWSJ9LCJ1c2VyIjp7Im5hbWUiOiJVc21hbkd1cm1lZXQiLCJlbWFpbCI6Imd1cm1lZXRfdXNtYW5AbWVudG9yYS51bm8iLCJlbWFpbFZlcmlmaWVkIjp0cnVlLCJpbWFnZSI6bnVsbCwiY3JlYXRlZEF0IjoiMjAyNi0wNC0wN1QxOToyMjo1OC43NjVaIiwidXBkYXRlZEF0IjoiMjAyNi0wNC0xMlQxOToxNzoyNC4xODhaIiwiaWQiOiJ1NnpPNUhVck5rSmhuWkJZRTVNVWtwN1hYSmVDMEJSZCJ9LCJ1cGRhdGVkQXQiOjE3NzYzNzM2NzQ3NzMsInZlcnNpb24iOiIxIn0sImV4cGlyZXNBdCI6MTc3NjM3Mzk3NDc3Mywic2lnbmF0dXJlIjoiMGdQUU85ekpPQzZzUFBqVXJuMWYwc0JXV1FfV0xUMTIzNEZldnlyUGJJSSJ9; intercom-id-esc25l7u=329f26d2-4118-4c30-a4c4-20d842547057; intercom-session-esc25l7u=WkNuYlphbnpndStyNVJ3OWpiWEo3UnFVU2wrQWVldm9SVUM3ZHhzODV0Y2tJV2ZmWDRVYlZoU1p1WHY3bXBUSXViVUV6WVFaRTNMQjQzQ1BZT0svMzRudjdDbHdwcHRNVHpYSVp2YWViVXBLSGFWa0F0bFRqZDdDb2dYQ3VOdElNVEppb2dGcGI4T21nc0luRnU4MnVUcWFOMUZucXhObktpOWRSd3VLL1UrYU1SS2ZSc1JCcTZQV281SkhEaXFrSVI2RWFJNEw2WGpvWjZURDRjK1hGY2s3OGRsaU1JNmdpcmhtcG1RWW94bz0tLVo1RHhUbUlpNy9SZXpiK1FTdFlDN3c9PQ==--42190d3ad0eae8b015b2c3995adcdd3256da9d1b",
+      "proxies": [
+        "http://hdwqzkwd:syll1k420ir7@31.59.20.176:6754",
+        "http://hdwqzkwd:syll1k420ir7@198.23.239.134:6540",
+        "http://hdwqzkwd:syll1k420ir7@45.38.107.97:6014",
+        "http://hdwqzkwd:syll1k420ir7@107.172.163.27:6543",
+        "http://hdwqzkwd:syll1k420ir7@198.105.121.200:6462",
+        "http://hdwqzkwd:syll1k420ir7@216.10.27.159:6837",
+        "http://hdwqzkwd:syll1k420ir7@142.111.67.146:5611",
+        "http://hdwqzkwd:syll1k420ir7@191.96.254.138:6185",
+        "http://hdwqzkwd:syll1k420ir7@31.58.9.4:6077",
+        "http://hdwqzkwd:syll1k420ir7@23.26.71.145:5628"
+      ]
+    }
+  ],
+  "settings": {
+    "port": 3000,
+    "target": "https://stealthwriter.ai",
+    "dashboardName": "StealthWriter Hub"
+  }
+}

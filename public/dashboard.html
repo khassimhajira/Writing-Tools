@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StealthWriter Hub | Portal</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="icon" href="FAVICON.png">
+    <style>
+        .auto-icon {
+            width: 80px; height: 80px; border-radius: 12px;
+            display: flex; align-items: center; justify-content: center;
+            font-weight: 800; font-size: 2.2rem; color: white;
+            background: linear-gradient(135deg, #6366f1, #a855f7);
+            box-shadow: 0 10px 20px rgba(99, 102, 241, 0.2);
+            margin-bottom: 1rem;
+        }
+    </style>
+</head>
+<body>
+    <header id="dash-header">
+        <img src="LOGO.png" alt="Writing Tools" class="logo" onerror="this.outerHTML='<h2 class=\'logo\'>STEALTHWRITER</h2>'">
+        <div class="header-actions">
+            <div id="user-pill" style="font-size: 0.9rem; color: var(--text-secondary); background: var(--input-bg); padding: 0.3rem 0.8rem; border-radius: 20px;">
+                <div class="skeleton skeleton-text" style="width: 80px; margin:0;"></div>
+            </div>
+            <button class="theme-toggle" id="theme-btn" title="Toggle Theme" style="background:transparent; border:none; padding:8px; display:flex; align-items:center; justify-content:center; cursor:pointer; color:var(--text-secondary);">
+                <span id="theme-icon-container" style="display:flex; align-items:center;"></span>
+            </button>
+            <button id="logout-btn" style="background:transparent; color: var(--text-secondary); border:1px solid var(--border-color); padding: 0.3rem 0.8rem; width: auto;">Logout</button>
+        </div>
+    </header>
+
+    <main class="container" style="display: block;">
+        <div id="loading-view">
+            <div class="card"><div class="skeleton-title"></div><div class="skeleton-text"></div><div class="skeleton-btn"></div></div>
+        </div>
+
+        <div id="no-access-view" style="display:none; text-align:left; padding: 4rem 1rem;">
+            <div style="font-size: 4rem; margin-bottom: 2rem;">🛡️</div>
+            <h2 style="margin-bottom:1rem; font-weight:800;">Access Awaiting Activation</h2>
+            <p style="color:var(--text-secondary); max-width:500px; margin-bottom: 2rem;">Your account is ready, but you haven't been assigned any premium tools yet. Please contact your administrator.</p>
+        </div>
+
+        <div id="ready-view">
+            <div style="margin-bottom: 2.5rem;">
+                <h2 style="font-size: 2.2rem; font-weight: 800; margin-bottom: 0.5rem; letter-spacing: -0.02em;">MY SERVICES</h2>
+                <p style="color: var(--text-secondary); font-size: 1.1rem;">Click an icon to launch your workspace.</p>
+            </div>
+            <div id="services-grid" style="display: flex; flex-wrap: wrap; gap: 2.5rem; justify-content: flex-start; width: 100%;"></div>
+        </div>
+    </main>
+
+    <iframe id="portal-frame"></iframe>
+    <button id="portal-exit" onclick="exitPortal()">
+        <svg style="width:18px;height:18px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"></path></svg>
+        Back to Dashboard
+    </button>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        let currentUser = null;
+
+        function generateAutoIcon(name) {
+            const letters = (name || '?').substring(0, 2).toUpperCase();
+            return `<div class="auto-icon">${letters}</div>`;
+        }
+
+        async function init() {
+            try {
+                const userRes = await fetch('/hub/api/auth/me');
+                if (!userRes.ok) throw new Error();
+                currentUser = await userRes.json();
+                document.getElementById('user-pill').innerHTML = currentUser.username;
+
+                const servicesRes = await fetch('/hub/api/auth/services');
+                const services = await servicesRes.json();
+
+                document.getElementById('loading-view').style.display = 'none';
+                
+                if (services && services.length > 0) {
+                    document.getElementById('ready-view').style.display = 'flex';
+                    document.getElementById('no-access-view').style.display = 'none';
+                    
+                    document.getElementById('services-grid').innerHTML = services.map(s => `
+                        <div class="service-wrapper">
+                            <div class="service-logo-card animate-in" onclick="launchPortal('${s.slug}')" title="Launch ${s.name}">
+                                <div class="logo-composite ${s.slug === 'stealth' ? 'invert-dark' : ''}">
+                                    <div class="logo-icon">
+                                        ${s.icon_svg ? (
+                                            s.icon_svg.trim().startsWith('<svg') || s.icon_svg.trim().startsWith('<div') 
+                                            ? s.icon_svg 
+                                            : `<img src="${s.icon_svg}" alt="" style="height:100%; width:100%; object-fit:contain;">`
+                                        ) : generateAutoIcon(s.name)}
+                                    </div>
+                                    <div class="logo-text">${s.text_svg || `<span>${s.name}</span>`}</div>
+                                </div>
+                                <div class="status-overlay"></div>
+                            </div>
+                        </div>
+                    `).join('');
+
+
+                } else {
+                    document.getElementById('ready-view').style.display = 'none';
+                    document.getElementById('no-access-view').style.display = 'block';
+                }
+
+                const token = document.cookie.split('; ').find(row=>row.startsWith('stealth_hub_token='))?.split('=')[1];
+                if (token) socket.emit('authenticate', token);
+            } catch(e) { window.location.href = '/'; }
+        }
+
+        function launchPortal(slug) {
+            document.body.classList.add('portal-open');
+            const frame = document.getElementById('portal-frame');
+            frame.src = '/proxy/' + slug.trim();
+            frame.style.display = 'block';
+            document.getElementById('portal-exit').style.display = 'flex';
+        }
+
+        function exitPortal() {
+            document.body.classList.remove('portal-open');
+            document.getElementById('portal-frame').src = 'about:blank';
+            document.getElementById('portal-frame').style.display = 'none';
+            document.getElementById('portal-exit').style.display = 'none';
+        }
+
+        socket.on('force_refresh', () => init());
+        socket.on('global_reload', () => init());
+
+        document.getElementById('logout-btn').onclick = () => { window.location.href = '/hub/api/auth/logout'; };
+        const themeBtn = document.getElementById('theme-btn'), themeCont = document.getElementById('theme-icon-container');
+        function updateThemeUI(t) { themeCont.innerHTML = t==='light'?'☾':'☼'; }
+        themeBtn.onclick = () => { const cur = document.documentElement.getAttribute('data-theme')||'dark', next = cur==='dark'?'light':'dark'; document.documentElement.setAttribute('data-theme', next); localStorage.setItem('hub-theme', next); updateThemeUI(next); };
+        const saved = localStorage.getItem('hub-theme')||'dark'; document.documentElement.setAttribute('data-theme', saved); updateThemeUI(saved);
+        init();
+    </script>
+</body>
+</html>
