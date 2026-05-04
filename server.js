@@ -243,6 +243,9 @@ app.use(async (req, res, next) => {
     // --- BLOCK TELEMETRY & ANALYTICS ---
     const blockedPaths = ['/ces/v1/', 'statsig', 'datadoghq', '/track', 'sentry.io'];
     if (blockedPaths.some(bp => req.url.includes(bp))) {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, PATCH, DELETE');
+        res.setHeader('Access-Control-Allow-Headers', '*');
         return res.status(200).json({});
     }
 
@@ -461,7 +464,11 @@ app.use(async (req, res, next) => {
                 
                 // Add Anti-Detection Headers
                 forwardHeaders['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/124.0.0.0';
-                forwardHeaders['Accept'] = 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8';
+                if (acceptsHtml) {
+                    forwardHeaders['Accept'] = 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8';
+                } else if (!forwardHeaders['Accept']) {
+                    forwardHeaders['Accept'] = '*/*';
+                }
                 forwardHeaders['Accept-Language'] = 'en-US,en;q=0.9';
                 forwardHeaders['Sec-Ch-Ua'] = '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"';
                 forwardHeaders['Sec-Ch-Ua-Mobile'] = '?0';
@@ -694,7 +701,7 @@ app.use(async (req, res, next) => {
                 // --- SEND RESPONSE ---
                 Object.keys(response.headers).forEach(key => {
                     const lowKey = key.toLowerCase();
-                    if (!['content-length', 'content-security-policy', 'x-frame-options', 'transfer-encoding'].includes(lowKey)) {
+                    if (!['content-length', 'content-security-policy', 'x-frame-options', 'transfer-encoding', 'content-encoding'].includes(lowKey)) {
                         res.setHeader(key, response.headers[key]);
                     }
                 });
@@ -1124,16 +1131,20 @@ proxy.on('proxyReq', (proxyReq, req, res, options) => {
             
             // Spoof Modern Chrome on Windows 10
             proxyReq.setHeader('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
-            proxyReq.setHeader('Accept', 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8');
-            proxyReq.setHeader('Accept-Language', 'en-US,en;q=0.9');
-            proxyReq.setHeader('Sec-Ch-Ua', '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"');
-            proxyReq.setHeader('Sec-Ch-Ua-Mobile', '?0');
-            proxyReq.setHeader('Sec-Ch-Ua-Platform', '"Windows"');
-            proxyReq.setHeader('Sec-Fetch-Dest', 'document');
-            proxyReq.setHeader('Sec-Fetch-Mode', 'navigate');
-            proxyReq.setHeader('Sec-Fetch-Site', 'none');
-            proxyReq.setHeader('Sec-Fetch-User', '?1');
-            proxyReq.setHeader('Upgrade-Insecure-Requests', '1');
+            
+            // ONLY spoof navigation headers if it's a document request, otherwise API requests will fail with Protocol Errors
+            const isDoc = req.headers['sec-fetch-dest'] === 'document' || req.headers['accept']?.includes('text/html');
+            if (isDoc) {
+                proxyReq.setHeader('Accept', 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8');
+                proxyReq.setHeader('Sec-Fetch-Dest', 'document');
+                proxyReq.setHeader('Sec-Fetch-Mode', 'navigate');
+                proxyReq.setHeader('Sec-Fetch-Site', 'none');
+                proxyReq.setHeader('Sec-Fetch-User', '?1');
+                proxyReq.setHeader('Upgrade-Insecure-Requests', '1');
+            } else {
+                // For API/Asset requests, forward the original headers if present
+                if (req.headers['accept']) proxyReq.setHeader('Accept', req.headers['accept']);
+            }
 
             console.log(`[Proxy Outbound] ${req.method} -> ${req.targetUrl}`);
         } catch(e) {}
