@@ -41,7 +41,7 @@ router.post('/login', async (req, res) => {
                 if (!user) {
                     const result = await run('INSERT INTO users (username, email, password_hash, role) VALUES (?, ?, ?, ?)', 
                         [amUser.username, amUser.email, amUser.password_hash, 'user']);
-                    user = await get('SELECT * FROM users WHERE id = ?', [result.lastID]);
+                    user = await get('SELECT * FROM users WHERE id = ?', [result.insertId]);
                 } else {
                     await run('UPDATE users SET password_hash = ? WHERE id = ?', [amUser.password_hash, user.id]);
                     user.password_hash = amUser.password_hash;
@@ -60,11 +60,11 @@ router.post('/login', async (req, res) => {
                         if (cookie) {
                             await run(`INSERT INTO user_assignments (user_id, service_id, cookie_id) 
                                        VALUES (?, ?, ?) 
-                                       ON CONFLICT(user_id, service_id) DO UPDATE SET cookie_id = EXCLUDED.cookie_id`, 
+                                       ON DUPLICATE KEY UPDATE cookie_id = VALUES(cookie_id)`, 
                                        [user.id, service.id, cookie.id]);
                         } else {
                             // Even if no cookie exists yet, at least give them the service entry
-                            await run('INSERT OR IGNORE INTO user_assignments (user_id, service_id) VALUES (?, ?)', [user.id, service.id]);
+                            await run('INSERT IGNORE INTO user_assignments (user_id, service_id) VALUES (?, ?)', [user.id, service.id]);
                         }
                     }
                 }
@@ -144,7 +144,7 @@ router.get('/services', async (req, res) => {
                     const existing = await get('SELECT id FROM user_assignments WHERE user_id = ? AND service_id = ?', [verified.id, service.id]);
                     if (!existing) {
                         const cookie = await get('SELECT id FROM cookies WHERE service_id = ? LIMIT 1', [service.id]);
-                        await run('INSERT OR IGNORE INTO user_assignments (user_id, service_id, cookie_id) VALUES (?, ?, ?)', [verified.id, service.id, cookie ? cookie.id : null]);
+                        await run('INSERT IGNORE INTO user_assignments (user_id, service_id, cookie_id) VALUES (?, ?, ?)', [verified.id, service.id, cookie ? cookie.id : null]);
                     }
                 } else {
                     // Revoke if they lost access

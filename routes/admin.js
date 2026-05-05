@@ -124,7 +124,7 @@ router.post('/cookies', async (req, res) => {
 router.delete('/cookies/:id', async (req, res) => {
     try {
         const result = await run('DELETE FROM cookies WHERE id = ?', [req.params.id]);
-        if (result.changes === 0) {
+        if (result.affectedRows === 0) {
             return res.status(404).json({ error: 'Slot not found' });
         }
         res.json({ message: 'Cookie deleted' });
@@ -196,12 +196,12 @@ router.post('/sync-amember', async (req, res) => {
 
                 if (!hubUser) {
                     // New user — insert into Hub DB using aMember password hash directly
-                    const result = await run(
-                        'INSERT INTO users (username, email, password_hash, role, status) VALUES (?, ?, ?, ?, ?)',
-                        [username, email, amUser.pass, 'user', 'active']
-                    );
-                    hubUser = { id: result.lastID };
-                    created++;
+                        const result = await run(
+                            'INSERT INTO users (username, email, password_hash, role, status) VALUES (?, ?, ?, ?, ?)',
+                            [username, email, amUser.pass, 'user', 'active']
+                        );
+                        hubUser = { id: result.insertId };
+                        created++;
                 } else {
                     // Existing user — update password hash to stay in sync
                     await run('UPDATE users SET password_hash = ? WHERE id = ?', [amUser.pass, hubUser.id]);
@@ -224,7 +224,7 @@ router.post('/sync-amember', async (req, res) => {
                             // Find first available cookie slot
                             const cookie = await get('SELECT id FROM cookies WHERE service_id = ? LIMIT 1', [service.id]);
                             await run(
-                                'INSERT OR IGNORE INTO user_assignments (user_id, service_id, cookie_id) VALUES (?, ?, ?)',
+                                'INSERT IGNORE INTO user_assignments (user_id, service_id, cookie_id) VALUES (?, ?, ?)',
                                 [hubUser.id, service.id, cookie ? cookie.id : null]
                             );
                         }
@@ -332,7 +332,7 @@ router.post('/users/:id/assign', async (req, res) => {
             // Add or update assignment
             await run(`INSERT INTO user_assignments (user_id, service_id, cookie_id) 
                        VALUES (?, ?, ?) 
-                       ON CONFLICT(user_id, service_id) DO UPDATE SET cookie_id = EXCLUDED.cookie_id`, 
+                       ON DUPLICATE KEY UPDATE cookie_id = VALUES(cookie_id)`, 
                        [req.params.id, service_id, cookie_id]);
         }
         
@@ -353,9 +353,9 @@ router.delete('/users/:id', async (req, res) => {
     console.log(`[ADMIN] Request to DELETE student ID: ${req.params.id}`);
     try {
         const result = await run('DELETE FROM users WHERE id = ? AND role != "admin"', [req.params.id]);
-        console.log(`[ADMIN] Deletion result: ${result.changes} rows affected`);
+        console.log(`[ADMIN] Deletion result: ${result.affectedRows} rows affected`);
         
-        if (result.changes === 0) {
+        if (result.affectedRows === 0) {
             return res.status(404).json({ error: 'User not found, already deleted, or protected' });
         }
         res.json({ message: 'User deleted' });
@@ -397,13 +397,13 @@ router.post('/users/:id/quick-grant', async (req, res) => {
         if (!slot) {
             const result = await run('INSERT INTO cookies (name, data, service_id) VALUES (?, ?, ?)', 
                 [`${service.name} Slot 1`, 'PLACEHOLDER_COOKIE', service_id]);
-            slot = { id: result.lastID };
+            slot = { id: result.insertId };
         }
 
         // 4. Assign user to this slot
         await run(`INSERT INTO user_assignments (user_id, service_id, cookie_id) 
                    VALUES (?, ?, ?) 
-                   ON CONFLICT(user_id, service_id) DO UPDATE SET cookie_id = EXCLUDED.cookie_id`, 
+                   ON DUPLICATE KEY UPDATE cookie_id = VALUES(cookie_id)`, 
                    [req.params.id, service_id, slot.id]);
 
         // Real-time Update Trigger

@@ -1,241 +1,92 @@
 require('dotenv').config();
-const sqlite3 = require('sqlite3').verbose();
-const path = require('path');
+const mysql = require('mysql2/promise');
 const bcrypt = require('bcryptjs');
-const fs = require('fs');
 
-// --- LOCAL DATABASE STORAGE ---
-// The database is stored in the local folder. 
-// Note: On Hostinger, this means the data will be DELETED every time you push or rebuild.
-let dbPath = process.env.DATABASE_PATH || path.join(__dirname, 'stealth.db');
-console.log('[Database] Using local storage at:', dbPath);
-
-const db = new sqlite3.Database(dbPath, (err) => {
-    if (err) {
-        console.error('Error opening database', err);
-    } else {
-        console.log('Database connected.');
-        initializeDB();
-    }
+// --- MYSQL DATABASE CONNECTION ---
+// We use the same credentials already in your .env for aMember
+const pool = mysql.createPool({
+    host: process.env.AMEMBER_DB_HOST || 'localhost',
+    user: process.env.AMEMBER_DB_USER,
+    password: process.env.AMEMBER_DB_PASS,
+    database: process.env.AMEMBER_DB_NAME,
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0
 });
 
-function initializeDB() {
-    db.serialize(() => {
-        db.run("PRAGMA foreign_keys = ON");
+console.log('[Database] Connected to MySQL:', process.env.AMEMBER_DB_NAME);
 
+async function initializeDB() {
+    try {
         // Services Table
-        db.run(`CREATE TABLE IF NOT EXISTS services (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+        await pool.query(`CREATE TABLE IF NOT EXISTS services (
+            id INT PRIMARY KEY AUTO_INCREMENT,
             name TEXT NOT NULL,
-            slug TEXT UNIQUE NOT NULL,
+            slug VARCHAR(191) UNIQUE NOT NULL,
             target_url TEXT NOT NULL,
-            icon_svg TEXT,
-            text_svg TEXT,
-            injection_js TEXT,
-            amember_product_id TEXT
+            icon_svg LONGTEXT,
+            text_svg LONGTEXT,
+            injection_js LONGTEXT,
+            amember_product_id VARCHAR(191)
         )`);
 
-        // Cookies Table (Updated with service_id)
-        db.run(`CREATE TABLE IF NOT EXISTS cookies (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+        // Cookies Table
+        await pool.query(`CREATE TABLE IF NOT EXISTS cookies (
+            id INT PRIMARY KEY AUTO_INCREMENT,
             name TEXT NOT NULL,
-            data TEXT NOT NULL,
-            service_id INTEGER,
+            data LONGTEXT NOT NULL,
+            service_id INT,
             FOREIGN KEY(service_id) REFERENCES services(id) ON DELETE CASCADE
         )`);
 
         // Users Table
-        db.run(`CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            email TEXT UNIQUE NOT NULL,
+        await pool.query(`CREATE TABLE IF NOT EXISTS users (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            username VARCHAR(191) UNIQUE NOT NULL,
+            email VARCHAR(191) UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
-            role TEXT DEFAULT 'student',
-            status TEXT DEFAULT 'active',
-            assigned_cookie_id INTEGER, -- Legacy field, kept for safety during transition
+            role VARCHAR(50) DEFAULT 'student',
+            status VARCHAR(50) DEFAULT 'active',
+            assigned_cookie_id INT,
             FOREIGN KEY(assigned_cookie_id) REFERENCES cookies(id) ON DELETE SET NULL
         )`);
 
-        // User Assignments Table (Multi-service support)
-        db.run(`CREATE TABLE IF NOT EXISTS user_assignments (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            service_id INTEGER NOT NULL,
-            cookie_id INTEGER,
+        // User Assignments Table
+        await pool.query(`CREATE TABLE IF NOT EXISTS user_assignments (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            user_id INT NOT NULL,
+            service_id INT NOT NULL,
+            cookie_id INT,
             FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
             FOREIGN KEY(service_id) REFERENCES services(id) ON DELETE CASCADE,
             FOREIGN KEY(cookie_id) REFERENCES cookies(id) ON DELETE SET NULL,
             UNIQUE(user_id, service_id)
         )`);
 
-        // Migration for existing DBs
-        db.run(`ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'`, (err) => {});
-        db.run(`ALTER TABLE cookies ADD COLUMN service_id INTEGER`, (err) => {});
-        db.run(`ALTER TABLE services ADD COLUMN amember_product_id TEXT`, (err) => {});
-
-        // Data Migration / Initialization
-        runMigrations();
-
-        // Insert default admin if none exists
-        db.get(`SELECT id FROM users WHERE role = 'admin'`, async (err, row) => {
-            if (!row) {
-                const adminUser = process.env.ADMIN_USER || 'admin';
-                const adminEmail = process.env.ADMIN_EMAIL || 'admin@stealthhub.com';
-                const adminPass = process.env.ADMIN_PASSWORD || 'admin123';
-
-                const salt = await bcrypt.genSalt(10);
-                const hash = await bcrypt.hash(adminPass, salt);
-                db.run(`INSERT INTO users (username, email, password_hash, role) VALUES (?, ?, ?, ?)`, 
-                    [adminUser, adminEmail, hash, 'admin']);
-                console.log(`Default admin created: ${adminUser} / ${adminPass}`);
-            }
-        });
-    });
-}
-
-function runMigrations() {
-    db.serialize(() => {
-        // Fix for old mentoratools redirect URLs
-        db.run(`UPDATE services SET target_url = 'https://stealthwriter.ai' WHERE slug = 'stealth' AND target_url LIKE '%mentoratools.com%'`);
-
-        // 1. Ensure StealthWriter service exists
-        const stealthIcon = `<svg width="36" height="38" viewBox="0 0 36 38" fill="none" xmlns="http://www.w3.org/2000/svg"><mask id="mask0_2076_5502" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="0" y="0" width="36" height="38"><path d="M3.8147e-06 38L35.8467 38L35.8467 0L3.8147e-06 0L3.8147e-06 38Z" fill="white"/></mask><g mask="url(#mask0_2076_5502)"><path d="M2.00431 20.2629C2.80754 20.2629 3.50195 19.785 3.82072 19.0991H17.3513V21.1519H9.00315L4.94772 24.0887C4.65857 23.9253 4.32491 23.8311 3.96907 23.8311C2.86433 23.8311 1.96479 24.7325 1.96479 25.8393C1.96479 26.9462 2.86433 27.8451 3.96907 27.8451C5.07373 27.8451 5.97326 26.9438 5.97326 25.8393C5.97326 25.7081 5.9609 25.5793 5.93619 25.4556L6.25996 25.2203L9.5493 22.8382H17.3537V26.2603H10.4044L6.12405 29.6948C5.8547 29.5611 5.55319 29.4818 5.23188 29.4818C4.12722 29.4819 3.22761 30.3832 3.22761 31.4876C3.22761 32.592 4.12722 33.4958 5.23188 33.4958C6.33654 33.4958 7.23615 32.5945 7.23615 31.4876C7.23615 31.3217 7.2139 31.1608 7.17684 31.0072L7.55992 30.7001L10.9975 27.9417H17.3563V36.086L12.3543 34.8652C12.1739 33.944 11.3608 33.2457 10.3896 33.2457C9.28486 33.2457 8.38532 34.1471 8.38532 35.2514C8.38532 36.3559 9.28486 37.2597 10.3896 37.2597C11.0222 37.2597 11.5882 36.9625 11.9539 36.502L17.9914 37.9753C18.0803 37.9927 18.1718 38.005 18.2682 37.9951L23.5444 37.5048C24.9111 37.3785 26.1147 36.5242 26.6855 35.2738L27.1328 34.2957C27.2861 33.9614 27.5554 33.6939 27.8916 33.5429L29.4065 32.8693C30.5952 32.3394 31.3613 31.1558 31.3613 29.8533V28.6746C31.3613 27.9467 31.7048 27.2508 32.2807 26.8075L34.4798 25.1213C35.3351 24.4651 35.8443 23.43 35.8443 22.3529V14.3348C35.8443 12.9804 35.1624 11.7397 34.0204 11.0167L28.1238 7.27516C27.6913 7.0003 27.4343 6.5323 27.4343 6.01972V5.35609C27.4343 3.92732 26.5224 2.6694 25.1656 2.22862L18.4436 0.0396538C18.3571 0.0124154 18.2706 -0.00244141 18.1841 -0.00244141C18.0927 -0.0024414 18.0013 0.0148941 17.9148 0.0421325L11.5412 2.19892C11.1754 1.81263 10.6614 1.57243 10.0905 1.57243C8.9858 1.57243 8.08627 2.47378 8.08627 3.58064C8.08627 4.68751 8.9858 5.58886 10.0905 5.58886C11.1211 5.58886 11.9736 4.8039 12.0824 3.79856L17.3439 2.01815V9.76129H11.2841L8.24197 8.13194L6.91239 7.41878C6.91239 7.38164 6.9173 7.34202 6.9173 7.30487C6.9173 6.19801 6.01777 5.29667 4.91311 5.29667C3.80837 5.29667 2.90884 6.19801 2.90884 7.30487C2.90884 8.41175 3.80837 9.31311 4.91311 9.31311C5.36533 9.31311 5.78049 9.15954 6.11661 8.90698L10.8616 11.45H17.3439V13.6266H11.7636L9.51224 13.3319L6.25251 12.3564C6.1117 11.3856 5.27885 10.6354 4.27303 10.6354C3.16829 10.6354 2.26875 11.5368 2.26875 12.6436C2.26875 13.7504 3.16829 14.6518 4.27303 14.6518C4.8686 14.6518 5.40485 14.3869 5.77067 13.9708L10.2536 15.3105H17.3414V17.4177H3.81336C3.49451 16.7319 2.80255 16.2539 1.99695 16.2539C0.892211 16.2539 -0.00732422 17.1552 -0.00732422 18.2621C-0.00732422 19.369 0.892211 20.2704 1.99695 20.2704L2.00431 20.2629ZM3.96653 26.7927C3.44018 26.7927 3.01512 26.3668 3.01512 25.8393C3.01512 25.312 3.44018 24.886 3.96653 24.886C4.49296 24.886 4.91802 25.312 4.91802 25.8393C4.91802 26.3668 4.49296 26.7927 3.96653 26.7927ZM5.22697 32.4435C4.70054 32.4435 4.27548 32.0175 4.27548 31.4901C4.27548 30.9627 4.70054 30.5368 5.22697 30.5368C5.75333 30.5368 6.17838 30.9627 6.17838 31.4901C6.17838 32.0175 5.75333 32.4435 5.22697 32.4435ZM10.3822 36.2073C9.85572 36.2073 9.43066 35.7814 9.43066 35.254C9.43066 34.7265 9.85572 34.3006 10.3822 34.3006C10.9085 34.3006 11.3336 34.7265 11.3336 35.254C11.3336 35.7814 10.9085 36.2073 10.3822 36.2073ZM10.0955 4.53646C9.5691 4.53646 9.14396 4.11055 9.14396 3.58312C9.14396 3.05568 9.5691 2.62978 10.0955 2.62978C10.6219 2.62978 11.0469 3.05568 11.0469 3.58312C11.0469 4.11055 10.6219 4.53646 10.0955 4.53646ZM4.91557 8.25819C4.38913 8.25819 3.96407 7.83231 3.96407 7.30487C3.96407 6.77745 4.38913 6.35153 4.91557 6.35153C5.44192 6.35153 5.86705 6.77745 5.86705 7.30487C5.86705 7.83231 5.44192 8.25819 4.91557 8.25819ZM4.27548 13.5945C3.74905 13.5945 3.32399 13.1686 3.32399 12.6411C3.32399 12.1137 3.74905 11.6878 4.27548 11.6878C4.80183 11.6878 5.22697 12.1137 5.22697 12.6411C5.22697 13.1686 4.80183 13.5945 4.27548 13.5945ZM25.7538 5.36105V5.87858C25.7143 5.90086 25.6773 5.92562 25.6426 5.95286L21.5798 9.25363C21.2189 9.54587 21.1645 10.0782 21.4562 10.4398C21.7478 10.8013 22.2766 10.8557 22.6399 10.5636L26.2111 7.66393C26.4606 8.07745 26.8042 8.43401 27.2268 8.70391L29.1791 9.94202L27.4121 11.6977C26.3593 12.7451 25.7538 14.1962 25.7538 15.6844V17.2394C25.7538 17.4475 25.7785 17.653 25.8205 17.8535L22.766 21.0478C21.943 21.9096 21.518 23.0387 21.5699 24.2298C21.6217 25.4209 22.1432 26.5104 23.0378 27.2954L26.043 29.9326C26.3915 30.2396 26.9228 30.2049 27.2292 29.8533C27.5356 29.5042 27.501 28.9718 27.1501 28.6647L24.145 26.0275C23.5988 25.5472 23.28 24.8835 23.2479 24.1555C23.2158 23.4275 23.4753 22.7367 23.9794 22.2117L26.6806 19.3888C26.7399 19.4457 26.7992 19.5027 26.8659 19.5547L29.9947 22.0755C30.3554 22.3677 30.8843 22.3083 31.1759 21.9467C31.4675 21.5852 31.4083 21.0528 31.0475 20.7631L27.9187 18.2423C27.6123 17.9972 27.4393 17.6307 27.4393 17.237V15.6819C27.4393 14.6419 27.8619 13.6242 28.5983 12.8937L30.6372 10.8682L33.1231 12.4455C33.7757 12.8591 34.1638 13.5672 34.1638 14.3398V17.346L31.3341 15.0678C31.1784 14.9415 30.993 14.8821 30.8077 14.8821C30.5605 14.8821 30.3184 14.9885 30.1528 15.1966C29.8612 15.5581 29.9205 16.0905 30.2813 16.3802L34.1638 19.5077V22.3578C34.1638 22.9149 33.8992 23.4498 33.4573 23.7891L31.2575 25.4754C31.0178 25.6586 30.8027 25.869 30.6125 26.0969L27.1205 23.2864C26.9648 23.1601 26.7795 23.1007 26.5941 23.1007C26.347 23.1007 26.1048 23.2071 25.9392 23.4152C25.6476 23.7767 25.7069 24.3091 26.0677 24.5988L29.8216 27.6223C29.7278 27.9639 29.6783 28.3206 29.6783 28.6796V29.8583C29.6783 30.4946 29.3026 31.0741 28.7219 31.3341L27.207 32.0076C26.4952 32.3246 25.9268 32.8892 25.603 33.5974L25.1558 34.5755C24.8345 35.2787 24.1574 35.7591 23.3887 35.8309L19.0293 36.2345V33.7385L22.6573 30.6308C23.0106 30.3287 23.0527 29.7963 22.7512 29.4422C22.5856 29.2466 22.3483 29.1476 22.1111 29.1476C21.9183 29.1476 21.7231 29.2145 21.565 29.3506L19.0293 31.5223V18.6534L23.6977 14.8078C24.0561 14.5131 24.1079 13.9807 23.8139 13.6217C23.6483 13.4187 23.4061 13.3147 23.1639 13.3147C22.976 13.3147 22.7858 13.3765 22.6301 13.5053L19.0293 16.4718V2.0033L24.6492 3.83322C25.3114 4.04865 25.7538 4.66028 25.7538 5.35857V5.36105ZM2.00186 17.3038C2.52821 17.3038 2.95335 17.7298 2.95335 18.2572C2.95335 18.7846 2.52821 19.2105 2.00186 19.2105C1.47542 19.2105 1.05037 18.7846 1.05037 18.2572C1.05037 17.7298 1.47542 17.3038 2.00186 17.3038Z" fill="currentColor"/>`
-        const stealthText = `<svg width="139" height="18" viewBox="0 0 139 18" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4.99352 15.2431C5.61631 15.2431 6.05682 15.1823 6.31505 15.0608C6.57327 14.9393 6.70239 14.7039 6.70239 14.3544C6.70239 14.0811 6.5353 13.8455 6.20112 13.6481C5.86695 13.4354 5.35809 13.2 4.67454 12.9418C4.14289 12.7443 3.65681 12.5392 3.21631 12.3266C2.79099 12.1139 2.42643 11.8633 2.12263 11.5747C1.81884 11.2709 1.58339 10.9139 1.4163 10.5038C1.24921 10.0936 1.16567 9.60004 1.16567 9.02276C1.16567 7.89871 1.58339 7.01008 2.41884 6.35697C3.25428 5.70376 4.40111 5.37721 5.85935 5.37721C6.58847 5.37721 7.2872 5.44557 7.95556 5.58223C8.62395 5.70376 9.15553 5.8405 9.55046 5.99236L8.95807 8.63548C8.56314 8.49874 8.13024 8.37721 7.65935 8.27088C7.20366 8.16454 6.6872 8.11138 6.10998 8.11138C5.04669 8.11138 4.51504 8.40761 4.51504 9C4.51504 9.13674 4.53783 9.25819 4.58339 9.36452C4.62897 9.47086 4.72011 9.57719 4.85682 9.68352C4.99352 9.77465 5.1758 9.88098 5.40365 10.0025C5.64669 10.1089 5.95049 10.2304 6.31505 10.3671C7.05935 10.6405 7.67454 10.9139 8.16062 11.1874C8.64672 11.4456 9.02644 11.7342 9.29983 12.0532C9.58851 12.357 9.78597 12.6987 9.89231 13.0784C10.0138 13.4583 10.0746 13.8987 10.0746 14.4001C10.0746 15.5848 9.62647 16.481 8.7302 17.0886C7.84923 17.6962 6.59606 18 4.97074 18C3.90745 18 3.01884 17.9089 2.30491 17.7266C1.60617 17.5443 1.1201 17.3924 0.84668 17.2709L1.4163 14.5139C1.99351 14.7418 2.58592 14.9241 3.19352 15.0608C3.80111 15.1823 4.40111 15.2431 4.99352 15.2431ZM12.4977 2.71141L15.8927 2.16454V5.69621H19.9712V8.5215H15.8927V12.7367C15.8927 13.4506 16.0142 14.0202 16.2573 14.4456C16.5154 14.8709 17.0243 15.0836 17.7839 15.0836C18.1484 15.0836 18.5206 15.0532 18.9003 14.9924C19.2952 14.9164 19.6522 14.8177 19.9712 14.6962L20.4497 17.3392C20.0396 17.5064 19.5838 17.6507 19.0826 17.7721C18.5813 17.8937 17.9661 17.9545 17.237 17.9545C16.3104 17.9545 15.5433 17.8329 14.9357 17.5899C14.3281 17.3317 13.8421 16.9823 13.4775 16.5418C13.113 16.0861 12.8547 15.5392 12.7028 14.9013C12.5661 14.2633 12.4977 13.5569 12.4977 12.7823V2.71141ZM21.7212 11.7798C21.7212 10.7164 21.8807 9.78985 22.1996 9C22.5338 8.19494 22.9667 7.52654 23.4984 6.99496C24.03 6.4633 24.6376 6.06073 25.3212 5.78733C26.0199 5.51394 26.7338 5.37721 27.4629 5.37721C29.1643 5.37721 30.5085 5.90123 31.4959 6.94935C32.4833 7.98228 32.9769 9.50882 32.9769 11.5291C32.9769 11.7266 32.9693 11.9468 32.9541 12.1899C32.9389 12.4177 32.9237 12.6228 32.9085 12.8051H25.2073C25.2832 13.5038 25.6098 14.0582 26.187 14.4683C26.7642 14.8785 27.539 15.0836 28.5111 15.0836C29.1339 15.0836 29.7415 15.0304 30.3338 14.9241C30.9414 14.8025 31.4351 14.6582 31.8149 14.4912L32.2706 17.2481C32.0883 17.3392 31.8453 17.4304 31.5415 17.5215C31.2377 17.6127 30.8959 17.6886 30.5161 17.7494C30.1516 17.8253 29.7567 17.8861 29.3313 17.9316C28.906 17.9772 28.4807 18 28.0553 18C26.9769 18 26.0351 17.8405 25.23 17.5215C24.4402 17.2026 23.7794 16.7696 23.2478 16.2228C22.7313 15.6608 22.3439 15 22.0857 14.2406C21.8427 13.481 21.7212 12.6608 21.7212 11.7798ZM29.6958 10.481C29.6807 10.1924 29.6276 9.91139 29.5363 9.638C29.4604 9.36452 29.3313 9.12154 29.1491 8.90887C28.9819 8.69621 28.7617 8.5215 28.4883 8.38477C28.23 8.24811 27.9035 8.17974 27.5085 8.17974C27.1288 8.17974 26.8022 8.24811 26.5288 8.38477C26.2554 8.5063 26.0275 8.67344 25.8453 8.88611C25.6629 9.09878 25.5186 9.34941 25.4123 9.638C25.3212 9.91139 25.2528 10.1924 25.2073 10.481H29.6958ZM40.1765 15.3114C40.5107 15.3114 40.8297 15.3038 41.1335 15.2886C41.4373 15.2734 41.6804 15.2506 41.8627 15.2202V12.6456C41.7259 12.6152 41.5209 12.5848 41.2474 12.5544C40.974 12.524 40.7234 12.5089 40.4955 12.5089C40.1765 12.5089 39.8727 12.5317 39.5841 12.5772C39.3107 12.6076 39.0677 12.676 38.855 12.7823C38.6424 12.8886 38.4753 13.0329 38.3537 13.2152C38.2323 13.3975 38.1715 13.6253 38.1715 13.8987C38.1715 14.4304 38.3462 14.8025 38.6955 15.0152C39.0601 15.2127 39.5538 15.3114 40.1765 15.3114ZM39.9031 5.37721C40.9057 5.37721 41.7411 5.4911 42.4095 5.71897C43.0778 5.94684 43.6095 6.27339 44.0044 6.69873C44.4146 7.12406 44.7031 7.64052 44.8702 8.24811C45.0373 8.85571 45.1208 9.53167 45.1208 10.2759V17.3392C44.6348 17.4456 43.9588 17.5671 43.093 17.7038C42.2272 17.8557 41.1791 17.9316 39.9487 17.9316C39.174 17.9316 38.4677 17.8633 37.8297 17.7266C37.2069 17.5899 36.6677 17.3696 36.212 17.0659C35.7563 16.7469 35.4069 16.3367 35.1639 15.8355C34.9209 15.3342 34.7993 14.719 34.7993 13.9899C34.7993 13.2911 34.9361 12.6987 35.2094 12.2127C35.498 11.7266 35.8779 11.3392 36.3487 11.0506C36.8196 10.7621 37.3589 10.5569 37.9665 10.4354C38.5741 10.2988 39.2044 10.2304 39.8576 10.2304C40.2981 10.2304 40.6854 10.2532 41.0196 10.2988C41.3689 10.3291 41.65 10.3747 41.8627 10.4354V10.1165C41.8627 9.53923 41.6879 9.07593 41.3386 8.72661C40.9892 8.37721 40.3816 8.2025 39.5158 8.2025C38.9386 8.2025 38.3689 8.24811 37.807 8.33924C37.2449 8.41517 36.7588 8.52915 36.3487 8.681L35.9158 5.94683C36.1133 5.88602 36.3563 5.8253 36.6449 5.76457C36.9487 5.68856 37.2753 5.62783 37.6246 5.58223C37.974 5.5215 38.3385 5.47598 38.7184 5.44557C39.1133 5.39997 39.5082 5.37721 39.9031 5.37721ZM52.9756 17.9089C51.9883 17.8937 51.1832 17.7873 50.5604 17.5899C49.9528 17.3924 49.4668 17.119 49.1021 16.7696C48.7528 16.4051 48.5097 15.9722 48.3731 15.4709C48.2516 14.9545 48.1908 14.3772 48.1908 13.7392V0.546784L51.5858 0V13.0557C51.5858 13.3595 51.6085 13.633 51.654 13.8759C51.6997 14.119 51.7832 14.324 51.9047 14.4912C52.0414 14.6582 52.2313 14.795 52.4743 14.9013C52.7174 15.0076 53.0439 15.0759 53.4541 15.1063L52.9756 17.9089ZM55.2861 2.71141L58.681 2.16454V5.69621H62.7596V8.5215H58.681V12.7367C58.681 13.4506 58.8026 14.0202 59.0457 14.4456C59.3038 14.8709 59.8127 15.0836 60.5722 15.0836C60.9368 15.0836 61.309 15.0532 61.6887 14.9924C62.0836 14.9164 62.4406 14.8177 62.7596 14.6962L63.2381 17.3392C62.8279 17.5064 62.3722 17.6507 61.871 17.7721C61.3697 17.8937 60.7545 17.9545 60.0254 17.9545C59.0988 17.9545 58.3317 17.8329 57.7241 17.5899C57.1165 17.3317 56.6304 16.9823 56.2659 16.5418C55.9014 16.0861 55.6431 15.5392 55.4912 14.9013C55.3545 14.2633 55.2861 13.5569 55.2861 12.7823V2.71141ZM65.5242 17.681V0.546784L68.9192 0V5.74173C69.1469 5.6658 69.4356 5.59743 69.7849 5.53671C70.1496 5.46078 70.4989 5.42282 70.8331 5.42282C71.8052 5.42282 72.6102 5.55947 73.2482 5.83294C73.9014 6.09113 74.4179 6.4633 74.7976 6.94935C75.1926 7.43541 75.466 8.01268 75.6179 8.681C75.7849 9.34941 75.8685 10.0937 75.8685 10.9139V17.681H72.4736V11.324C72.4736 10.2304 72.3293 9.45574 72.0407 9C71.7672 8.54426 71.2508 8.31648 70.4913 8.31648C70.1875 8.31648 69.8989 8.3468 69.6254 8.40761C69.3673 8.45313 69.1318 8.5063 68.9192 8.56711V17.681H65.5242ZM86.8935 5.90123C87.0301 6.66076 87.2044 7.47337 87.4174 8.33924C87.645 9.18991 87.8881 10.0633 88.1466 10.9595C88.4198 11.8405 88.7006 12.7139 88.9892 13.5798C89.2933 14.4456 89.5973 15.2583 89.9014 16.0177C90.1591 15.4405 90.4322 14.7418 90.7216 13.9216C91.0102 13.0861 91.2988 12.2127 91.5874 11.3013C91.876 10.3747 92.1414 9.44809 92.3845 8.5215C92.643 7.57971 92.8552 6.70628 93.0227 5.90123H94.4811C93.934 8.21015 93.3336 10.3215 92.6808 12.2354C92.0427 14.1493 91.3366 15.9646 90.5619 17.681H89.1722C88.9437 17.1494 88.7006 16.5569 88.443 15.9038C88.1999 15.2354 87.9414 14.5291 87.6682 13.7848C87.4097 13.0253 87.152 12.2354 86.8935 11.4152C86.6504 10.5797 86.4151 9.72913 86.1875 8.86326C85.959 9.72913 85.7162 10.5797 85.4579 11.4152C85.2149 12.2354 84.9566 13.0253 84.6833 13.7848C84.425 14.5291 84.1668 15.2354 83.9085 15.9038C83.6655 16.5569 83.4301 17.1494 83.2022 17.681H81.7896C81.0149 15.9646 80.3009 14.1493 79.6478 12.2354C79.0098 10.3215 78.4174 8.21015 77.8706 5.90123H79.4427C79.6098 6.70628 79.8149 7.57971 80.0579 8.5215C80.3161 9.44809 80.5895 10.3747 80.8782 11.3013C81.1668 12.2127 81.4554 13.0784 81.744 13.8987C82.0478 14.719 82.3288 15.4178 82.587 15.995C82.8757 15.2354 83.1643 14.4228 83.4529 13.557C83.7567 12.6912 84.0377 11.8177 84.2959 10.9367C84.5542 10.0557 84.7971 9.18991 85.025 8.33924C85.2529 7.47337 85.4503 6.66076 85.6174 5.90123H86.8935ZM100.983 5.67344C101.469 5.67344 101.925 5.71141 102.35 5.78733C102.791 5.86326 103.095 5.93919 103.262 6.0152L102.965 7.29111C102.844 7.23039 102.594 7.16958 102.214 7.10885C101.849 7.03292 101.363 6.99496 100.755 6.99496C100.117 6.99496 99.6011 7.04048 99.206 7.13161C98.8263 7.22274 98.5755 7.29876 98.4544 7.35948V17.681H96.9728V6.44809C97.3533 6.28104 97.8772 6.11389 98.5455 5.94683C99.2137 5.76457 100.026 5.67344 100.983 5.67344ZM106.977 17.681H105.495V5.90123H106.977V17.681ZM107.318 2.3468C107.318 2.6962 107.212 2.97724 106.999 3.18982C106.787 3.38737 106.528 3.48606 106.224 3.48606C105.921 3.48606 105.662 3.38737 105.449 3.18982C105.237 2.97724 105.131 2.6962 105.131 2.3468C105.131 1.99748 105.237 1.724 105.449 1.52654C105.662 1.31388 105.921 1.20754 106.224 1.20754C106.528 1.20754 106.787 1.31388 106.999 1.52654C107.212 1.724 107.318 1.99748 107.318 2.3468ZM112.292 5.90123H116.985V7.15446H112.292V13.4203C112.292 14.0886 112.346 14.6355 112.451 15.0608C112.573 15.4709 112.74 15.7899 112.953 16.0177C113.166 16.2456 113.423 16.3975 113.728 16.4735C114.032 16.5494 114.366 16.5874 114.73 16.5874C115.353 16.5874 115.854 16.519 116.234 16.3823C116.613 16.2304 116.91 16.0937 117.123 15.9722L117.487 17.2026C117.274 17.3392 116.902 17.4987 116.37 17.681C115.839 17.8481 115.262 17.9316 114.639 17.9316C113.91 17.9316 113.295 17.8405 112.793 17.6582C112.307 17.4608 111.913 17.1722 111.609 16.7925C111.32 16.3974 111.115 15.9114 110.994 15.3342C110.872 14.757 110.811 14.0734 110.811 13.2836V2.43793L112.292 2.16454V5.90123ZM119.007 11.7798C119.007 10.7469 119.152 9.85067 119.44 9.09113C119.744 8.31648 120.132 7.67084 120.602 7.15446C121.088 6.638 121.635 6.25819 122.243 6.0152C122.865 5.75693 123.504 5.62784 124.156 5.62784C125.599 5.62784 126.747 6.09869 127.597 7.04049C128.463 7.98228 128.896 9.43289 128.896 11.3924C128.896 11.5139 128.888 11.6355 128.873 11.7569C128.873 11.8785 128.866 11.9924 128.85 12.0988H120.579C120.625 13.5417 120.982 14.6507 121.65 15.4253C122.318 16.2 123.382 16.5874 124.84 16.5874C125.645 16.5874 126.283 16.5114 126.754 16.3595C127.225 16.2076 127.567 16.0785 127.779 15.9722L128.052 17.2481C127.84 17.3696 127.437 17.5139 126.845 17.681C126.268 17.8481 125.585 17.9316 124.795 17.9316C123.761 17.9316 122.881 17.7798 122.152 17.476C121.423 17.1722 120.822 16.7469 120.351 16.2C119.881 15.6532 119.539 15.0076 119.326 14.2633C119.114 13.5038 119.007 12.676 119.007 11.7798ZM127.37 10.8455C127.339 9.61515 127.05 8.65824 126.504 7.97472C125.957 7.29112 125.182 6.94935 124.18 6.94935C123.648 6.94935 123.17 7.05569 122.744 7.26836C122.334 7.48102 121.97 7.76961 121.65 8.13413C121.346 8.48354 121.103 8.89367 120.921 9.36452C120.754 9.83546 120.656 10.3291 120.625 10.8455H127.37ZM136.206 5.67344C136.692 5.67344 137.148 5.71141 137.573 5.78733C138.014 5.86326 138.318 5.93919 138.485 6.0152L138.188 7.29111C138.067 7.23039 137.817 7.16958 137.437 7.10885C137.072 7.03292 136.587 6.99496 135.978 6.99496C135.34 6.99496 134.824 7.04048 134.429 7.13161C134.049 7.22274 133.799 7.29876 133.677 7.35948V17.681H132.197V6.44809C132.576 6.28104 133.1 6.11389 133.768 5.94683C134.437 5.76457 135.249 5.67344 136.206 5.67344Z" fill="currentColor"/>`;
-        const stealthJS = `
-<script id="proxy-stealth">
-(function(){
-    // --- 1. Robust CSS (Standard Selectors Only) ---
-    var s = document.createElement('style');
-    s.id = 'stealth-hide';
-    s.textContent = [
-        /* Known ID/Class selectors */
-        '[data-sidebar="menu"] a[href*="account"]',
-        '[data-sidebar="menu"] a[href*="pricing"]',
-        '[data-sidebar="menu"] a[href*="settings"]',
-        '[data-sidebar="menu"] a[href*="billing"]',
-        '[data-sidebar="footer"]',
-        '.intercom-launcher',
-        '#intercom-container',
-        /* Hide specific account page elements instead of the whole main area */
-        '.breadcrumb',
-        '.flex.items-center.gap-4:has(.rounded-full)'
-    ].join(',') + ' { display: none !important; visibility: hidden !important; opacity: 0 !important; }';
-    document.head.appendChild(s);
-
-    // --- 2. Powerful JS Hider (Handles text-based matching) ---
-    function hideSensitiveElements() {
-        // Hide by text content
-        const keywords = ['Account', 'Pricing', 'Billing', 'Subscription', 'Upgrade', 'Settings', 'UsmanGurmeet', 'gurmeet_usman'];
-        
-        // Target sidebar labels and headers
-        const tags = ['span', 'h3', 'h2', 'a', 'p', 'div', 'button'];
-        tags.forEach(tag => {
-            document.querySelectorAll(tag).forEach(el => {
-                if (keywords.some(kw => el.textContent.includes(kw))) {
-                    // Check if it's a menu item or header
-                    if (el.textContent.length < 50) { 
-                        el.style.display = 'none';
-                        el.style.visibility = 'hidden';
-                        // If it's a sidebar label, hide the parent link/container too
-                        if (el.closest('a')) el.closest('a').style.display = 'none';
-                        if (el.closest('li')) el.closest('li').style.display = 'none';
-                    }
-                }
-            });
-        });
-
-        // Hide avatars and profile icons
-        document.querySelectorAll('img[src*="avatar"], [class*="avatar"], [data-slot*="avatar"]').forEach(el => {
-            const container = el.closest('button') || el.closest('div');
-            if (container) container.style.display = 'none';
-        });
+        console.log('[Database] MySQL Tables Verified.');
+    } catch (err) {
+        console.error('[Database] Initialization Error:', err);
     }
-
-    // --- 3. MutationObserver to catch dynamic React renders ---
-    var observer = new MutationObserver(function(mutations) {
-        hideSensitiveElements();
-        mutations.forEach(function(m) {
-            m.addedNodes.forEach(function(node) {
-                if (node.nodeType === 1) {
-                    if (node.tagName === 'IFRAME' && (node.name||'').includes('intercom')) node.style.display = 'none';
-                }
-            });
-        });
-    });
-    
-    observer.observe(document.documentElement, { childList: true, subtree: true });
-    
-    // Initial run
-    hideSensitiveElements();
-
-    // Periodic sweep for SPA navigation
-    setInterval(hideSensitiveElements, 1000);
-
-    // Anti-detection
-    try { Object.defineProperty(navigator, 'webdriver', { get: () => undefined }); } catch(e) {}
-})();
-</script>
-`;
-
-        db.get(`SELECT id FROM services WHERE slug = 'stealth'`, (err, row) => {
-            if (!row) {
-                db.run(`INSERT INTO services (name, slug, target_url, icon_svg, text_svg, injection_js, amember_product_id) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-                    ['StealthWriter', 'stealth', process.env.TARGET_URL || 'https://stealthwriter.ai', stealthIcon, stealthText, stealthJS, process.env.STEALTH_PRODUCT_ID || null], (err) => {
-                        if (err) console.error('Migration Error (Service):', err);
-                        else {
-                            console.log('StealthWriter service initialized.');
-                            // Now migrate cookies and assignments
-                            db.get(`SELECT id FROM services WHERE slug = 'stealth'`, (err, service) => {
-                                if (service) {
-                                    db.run(`UPDATE cookies SET service_id = ? WHERE service_id IS NULL`, [service.id]);
-                                    
-                                    // Build user assignments from existing user.assigned_cookie_id
-                                    db.each(`SELECT id, assigned_cookie_id FROM users WHERE assigned_cookie_id IS NOT NULL`, (err, user) => {
-                                        db.run(`INSERT OR IGNORE INTO user_assignments (user_id, service_id, cookie_id) VALUES (?, ?, ?)`,
-                                            [user.id, service.id, user.assigned_cookie_id]);
-                                    });
-                                }
-                            });
-                        }
-                    }
-                );
-            } else {
-                // ALWAYS update injection_js for existing records to keep it current
-                db.run(`UPDATE services SET injection_js = ? WHERE slug = 'stealth'`, [stealthJS], (err) => {
-                    if (err) console.error('Migration Error (Injection JS Update):', err);
-                    else console.log('StealthWriter injection JS updated.');
-                });
-            }
-        });
-    });
 }
 
-// Promise wrapper for queries
-const query = (sql, params = []) => {
-    return new Promise((resolve, reject) => {
-        db.all(sql, params, (err, rows) => {
-            if (err) reject(err);
-            else resolve(rows);
-        });
-    });
+// Ensure tables exist on start
+initializeDB();
+
+// --- HELPER FUNCTIONS ---
+const query = async (sql, params = []) => {
+    // Convert SQLite "?" placeholders to MySQL "?" (they are the same in mysql2)
+    const [rows] = await pool.execute(sql, params);
+    return rows;
 };
 
-const run = (sql, params = []) => {
-    return new Promise((resolve, reject) => {
-        db.run(sql, params, function(err) {
-            if (err) reject(err);
-            else resolve(this);
-        });
-    });
+const run = async (sql, params = []) => {
+    const [result] = await pool.execute(sql, params);
+    return result;
 };
 
-const get = (sql, params = []) => {
-    return new Promise((resolve, reject) => {
-        db.get(sql, params, (err, row) => {
-            if (err) reject(err);
-            else resolve(row);
-        });
-    });
+const get = async (sql, params = []) => {
+    const [rows] = await pool.execute(sql, params);
+    return rows[0] || null;
 };
 
-module.exports = { db, query, run, get };
+module.exports = { pool, query, run, get };
