@@ -132,17 +132,47 @@ app.use('/hub/api', hubParsers, (req, res) => {
 
 
 // --- PROXY ROTATION ENGINE ---
-// Initialize Proxy Agents with Safety Catch
-const proxyUrls = (process.env.PROXY_LIST || '').split(',').map(u => u.trim()).filter(u => u && u.length > 5);
-const proxyAgents = [];
-proxyUrls.forEach(url => {
+let proxyAgents = [];
+async function loadProxies() {
     try {
-        proxyAgents.push(new HttpsProxyAgent(url));
+        const rows = await query('SELECT url FROM proxies WHERE status = "active"');
+        const urls = rows.map(r => r.url);
+        
+        const newAgents = [];
+        urls.forEach(url => {
+            try {
+                newAgents.push(new HttpsProxyAgent(url));
+            } catch(e) {
+                console.error(`[Proxy] Skipping invalid URL: ${url}`);
+            }
+        });
+
+        // Fallback to .env if DB is empty
+        if (newAgents.length === 0 && process.env.PROXY_LIST) {
+            const envUrls = (process.env.PROXY_LIST || '').split(',').map(u => u.trim()).filter(u => u.length > 5);
+            envUrls.forEach(url => {
+                try {
+                    newAgents.push(new HttpsProxyAgent(url));
+                } catch(e) {}
+            });
+        }
+
+        proxyAgents = newAgents;
+        console.log(`[Init] ${proxyAgents.length} Proxy Agents ready.`);
     } catch(e) {
-        console.error(`[Init] Skipping invalid proxy URL: ${url}`);
+        console.error('[Init] Proxy load error:', e);
     }
+}
+loadProxies();
+
+// Listen for updates from Admin API
+io.on('connection', (socket) => {
+    socket.on('proxies_updated', () => {
+        console.log('[Proxy] Admin updated proxy list. Reloading...');
+        loadProxies();
+    });
 });
-console.log(`[Init] ${proxyAgents.length} Proxy Agents ready.`);
+
 let globalProxyCounter = 0;
 
 // IP-based Sticky Service Tracking (Fixes 404s for background requests)
@@ -197,13 +227,17 @@ app.use(async (req, res, next) => {
     // --- DEBUG ROUTE: Test Proxies via Browser ---
     if (req.url === '/debug/test-proxies') {
         const results = [];
-        const proxyUrls = (process.env.PROXY_LIST || '').split(',').map(u => u.trim()).filter(u => u && u.length > 5);
+        const rows = await query('SELECT url FROM proxies WHERE status = "active"');
+        let urls = rows.map(r => r.url);
+        if (urls.length === 0) {
+            urls = (process.env.PROXY_LIST || '').split(',').map(u => u.trim()).filter(u => u.length > 5);
+        }
         
         results.push(`<h1>Proxy Diagnostic Tool</h1>`);
-        results.push(`<p>Testing ${proxyUrls.length} proxies from .env...</p>`);
+        results.push(`<p>Testing ${urls.length} proxies...</p>`);
         results.push(`<hr>`);
 
-        for (let i = 0; i < proxyUrls.length; i++) {
+        for (let i = 0; i < urls.length; i++) {
             const url = proxyUrls[i];
             const masked = url.split('@')[1] || url;
             try {

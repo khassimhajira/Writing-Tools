@@ -418,5 +418,109 @@ router.post('/users/:id/quick-grant', async (req, res) => {
 });
 
 
+// --- PROXY MANAGEMENT ---
+
+// Get all proxies
+router.get('/proxies', async (req, res) => {
+    try {
+        const proxies = await query('SELECT * FROM proxies');
+        res.json(proxies);
+    } catch(e) { res.status(500).json({ error: 'Database error' }); }
+});
+
+// Helper to parse messy proxy pastes
+function parseProxyPaste(text) {
+    if (!text) return [];
+    
+    // Split by lines or double newlines
+    const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+    const results = [];
+    
+    // Attempt 1: Standard URL format (http://user:pass@ip:port)
+    const urlRegex = /http[s]?:\/\/[^:]+:[^@]+@[^:]+:\d+/g;
+    const matches = text.match(urlRegex);
+    if (matches) return matches;
+
+    // Attempt 2: IP:Port:User:Pass format
+    lines.forEach(line => {
+        const parts = line.split(/[:\s\t,|]+/);
+        if (parts.length >= 4) {
+            // Check if first part looks like IP
+            if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(parts[0])) {
+                results.push(`http://${parts[2]}:${parts[3]}@${parts[0]}:${parts[1]}`);
+            }
+        }
+    });
+
+    if (results.length > 0) return results;
+
+    // Attempt 3: Multi-line chunks (IP \n Port \n User \n Pass)
+    // We look for sequences of 4 lines
+    for (let i = 0; i < lines.length - 3; i++) {
+        const p1 = lines[i];   // IP?
+        const p2 = lines[i+1]; // Port?
+        const p3 = lines[i+2]; // User?
+        const p4 = lines[i+3]; // Pass?
+        
+        if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(p1) && /^\d+$/.test(p2)) {
+            results.push(`http://${p3}:${p4}@${p1}:${p2}`);
+            i += 3; // Skip next 3 lines as they are used
+        }
+    }
+
+    return results;
+}
+
+// Bulk add proxies
+router.post('/proxies/bulk', async (req, res) => {
+    const { text } = req.body;
+    const urls = parseProxyPaste(text);
+    
+    if (urls.length === 0) {
+        return res.status(400).json({ error: 'No valid proxies found in paste.' });
+    }
+
+    try {
+        let added = 0;
+        for (const url of urls) {
+            try {
+                await run('INSERT OR IGNORE INTO proxies (url) VALUES (?)', [url]);
+                added++;
+            } catch(e) {}
+        }
+        
+        // Notify server to reload proxies
+        const io = req.app.get('io');
+        if (io) io.emit('proxies_updated');
+
+        res.json({ message: `Successfully processed ${urls.length} proxies. Added ${added} new ones.`, count: urls.length });
+    } catch(e) { res.status(500).json({ error: 'Database error' }); }
+});
+
+// Update proxy status
+router.put('/proxies/:id', async (req, res) => {
+    const { status, url } = req.body;
+    try {
+        await run('UPDATE proxies SET status = ?, url = ? WHERE id = ?', [status, url, req.params.id]);
+        
+        const io = req.app.get('io');
+        if (io) io.emit('proxies_updated');
+
+        res.json({ message: 'Proxy updated' });
+    } catch(e) { res.status(500).json({ error: 'Database error' }); }
+});
+
+// Delete proxy
+router.delete('/proxies/:id', async (req, res) => {
+    try {
+        await run('DELETE FROM proxies WHERE id = ?', [req.params.id]);
+        
+        const io = req.app.get('io');
+        if (io) io.emit('proxies_updated');
+
+        res.json({ message: 'Proxy deleted' });
+    } catch(e) { res.status(500).json({ error: 'Database error' }); }
+});
+
 module.exports = router;
 

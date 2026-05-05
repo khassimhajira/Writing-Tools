@@ -56,6 +56,15 @@ function initializeDB() {
             FOREIGN KEY(assigned_cookie_id) REFERENCES cookies(id) ON DELETE SET NULL
         )`);
 
+        // Proxies Table
+        db.run(`CREATE TABLE IF NOT EXISTS proxies (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            url TEXT UNIQUE NOT NULL,
+            status TEXT DEFAULT 'active',
+            last_checked TIMESTAMP,
+            latency INTEGER
+        )`);
+
         // User Assignments Table (Multi-service support)
         db.run(`CREATE TABLE IF NOT EXISTS user_assignments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -75,6 +84,7 @@ function initializeDB() {
 
         // Data Migration / Initialization
         runMigrations();
+        seedProxies();
 
         // Insert default admin if none exists
         db.get(`SELECT id FROM users WHERE role = 'admin'`, async (err, row) => {
@@ -90,6 +100,18 @@ function initializeDB() {
                 console.log(`Default admin created: ${adminUser} / ${adminPass}`);
             }
         });
+    });
+}
+
+function seedProxies() {
+    db.get(`SELECT COUNT(*) as count FROM proxies`, (err, row) => {
+        if (row && row.count === 0 && process.env.PROXY_LIST) {
+            console.log('[Database] Seeding proxies from .env...');
+            const urls = process.env.PROXY_LIST.split(',').map(u => u.trim()).filter(u => u.length > 5);
+            const stmt = db.prepare(`INSERT OR IGNORE INTO proxies (url) VALUES (?)`);
+            urls.forEach(url => stmt.run(url));
+            stmt.finalize();
+        }
     });
 }
 

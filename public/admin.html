@@ -76,6 +76,7 @@
             <div class="nav-link" onclick="switchView('services', this)">Services</div>
             <div class="nav-link" onclick="switchView('users', this)">User Pool</div>
             <div class="nav-link" onclick="switchView('slots', this)">Slot Orchestration</div>
+            <div class="nav-link" onclick="switchView('proxies', this)">Proxy Manager</div>
             <div class="nav-link" onclick="switchView('system', this)">System Tools</div>
         </nav>
         <div style="margin-top:auto; padding-top:1rem;">
@@ -126,6 +127,30 @@
         <div id="view-slots" class="tab-pane">
             <div class="col-header"><h2>Real-Time Slot Orchestration</h2></div>
             <div id="slots-master-container"></div>
+        </div>
+
+        <!-- PROXIES TAB -->
+        <div id="view-proxies" class="tab-pane">
+            <div class="col-header">
+                <h2>Proxy Infrastructure</h2>
+                <button onclick="openProxyBulkModal()" style="width:auto; background: linear-gradient(135deg, #10b981, #3b82f6);">Bulk Add Proxies</button>
+            </div>
+            
+            <div style="display:grid; grid-template-columns: 1fr 350px; gap: 1.5rem; align-items: start;">
+                <div class="card" style="padding:0; overflow:hidden;">
+                    <div style="padding: 1rem; border-bottom: 1px solid var(--border-color); background: rgba(255,255,255,0.02);">
+                        <h4 style="margin:0;">Active Proxy Pool</h4>
+                    </div>
+                    <div id="proxy-list" style="max-height: 70vh; overflow-y: auto;"></div>
+                </div>
+
+                <div class="card">
+                    <h4 style="margin-bottom:1rem;">Bulk Paste</h4>
+                    <p style="font-size:0.75rem; color:var(--text-secondary); margin-bottom:1rem;">Paste proxies in any format (URL, IP:Port:User:Pass, or multi-line blocks). Our engine will auto-parse them.</p>
+                    <textarea id="proxy-bulk-paste" style="height:300px; font-family:monospace; font-size:0.8rem; margin-bottom:1rem;" placeholder="Paste here..."></textarea>
+                    <button onclick="submitProxyBulk()" id="proxy-bulk-btn">Process & Save</button>
+                </div>
+            </div>
         </div>
 
         <!-- SYSTEM TAB -->
@@ -214,7 +239,7 @@
         });
         socket.on('global_reload', () => loadData());
 
-        let users = [], slots = [], services = [], onlineIds = [], activeInProxy = [];
+        let users = [], slots = [], services = [], proxies = [], onlineIds = [], activeInProxy = [];
 
         const presetLibrary = {
             chatgpt: {
@@ -299,10 +324,11 @@
                     fetch('/hub/api/admin/users').then(r => r.json()),
                     fetch('/hub/api/admin/cookies').then(r => r.json()),
                     fetch('/hub/api/admin/services').then(r => r.json()),
+                    fetch('/hub/api/admin/proxies').then(r => r.json()),
                     fetch('/hub/api/admin/active-users').then(r => r.json()),
                     fetch('/hub/api/admin/active-sessions').then(r => r.json())
                 ]);
-                [users, slots, services, onlineIds, activeInProxy] = res;
+                [users, slots, services, proxies, onlineIds, activeInProxy] = res;
                 render();
             } catch (e) { console.error('Load Error:', e); }
         }
@@ -392,6 +418,20 @@
                 `;}).join('');
             document.getElementById('cookie-service-id').innerHTML = services.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
             document.getElementById('edit-slot-service-id').innerHTML = services.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+
+            // Proxies
+            document.getElementById('proxy-list').innerHTML = proxies.map(p => `
+                <div class="user-row" style="display:flex; justify-content:space-between; align-items:center; padding: 0.75rem 1rem; border-bottom:1px solid var(--border-color);">
+                    <div style="display:flex; align-items:center; gap:1rem;">
+                        <span style="width:8px; height:8px; border-radius:50%; background: ${p.status === 'active' ? '#10b981' : '#f87171'}"></span>
+                        <div style="font-family:monospace; font-size:0.85rem;">${p.url.split('@')[1] || p.url}</div>
+                    </div>
+                    <div style="display:flex; gap: 8px;">
+                        <button onclick="toggleProxy(${p.id}, '${p.status}', '${p.url}')" style="width:auto; padding:4px 10px; font-size:10px; background:var(--input-bg);">${p.status === 'active' ? 'DISABLE' : 'ENABLE'}</button>
+                        <button onclick="deleteProxy(${p.id})" style="width:auto; padding:4px 10px; font-size:10px; background:#f87171;">REMOVE</button>
+                    </div>
+                </div>
+            `).join('') || '<p style="padding:2rem; text-align:center; color:var(--text-secondary);">No proxies in the database.</p>';
         }
 
         async function quickGrant(uid, sid) {
@@ -530,6 +570,32 @@
         function editSlot(id) { const s = slots.find(x => x.id === id); document.getElementById('edit-slot-id').value = s.id; document.getElementById('edit-slot-name').value = s.name; document.getElementById('edit-slot-service-id').value = s.service_id; document.getElementById('edit-slot-data').value = s.data; document.getElementById('slot-modal').style.display='flex'; }
         function closeSlotModal() { document.getElementById('slot-modal').style.display='none'; }
         document.getElementById('slot-edit-form').onsubmit = async (e) => { e.preventDefault(); const id = document.getElementById('edit-slot-id').value; const payload = { name: document.getElementById('edit-slot-name').value, service_id: parseInt(document.getElementById('edit-slot-service-id').value), data: document.getElementById('edit-slot-data').value }; await fetch(`/hub/api/admin/cookies/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) }); closeSlotModal(); loadData(); };
+
+        // Proxy Actions
+        async function submitProxyBulk() {
+            const text = document.getElementById('proxy-bulk-paste').value;
+            if (!text.trim()) return;
+            const btn = document.getElementById('proxy-bulk-btn');
+            btn.disabled = true; btn.innerText = 'Processing...';
+            try {
+                const res = await fetch('/hub/api/admin/proxies/bulk', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text}) });
+                const data = await res.json();
+                if (res.ok) { showAlert(data.message); document.getElementById('proxy-bulk-paste').value = ''; loadData(); socket.emit('proxies_updated'); }
+                else showAlert(data.error, 'error');
+            } finally { btn.disabled = false; btn.innerText = 'Process & Save'; }
+        }
+        async function toggleProxy(id, status, url) {
+            await fetch(`/hub/api/admin/proxies/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({status: status==='active'?'disabled':'active', url}) });
+            loadData();
+            socket.emit('proxies_updated');
+        }
+        async function deleteProxy(id) {
+            if (confirm('Delete proxy?')) {
+                await fetch(`/hub/api/admin/proxies/${id}`, { method:'DELETE' });
+                loadData();
+                socket.emit('proxies_updated');
+            }
+        }
 
         initTheme(); loadData();
         document.getElementById('logout-btn').onclick = async () => { await fetch('/hub/api/auth/logout', {method:'POST'}); window.location.href='/'; };
