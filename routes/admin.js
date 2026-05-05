@@ -196,12 +196,12 @@ router.post('/sync-amember', async (req, res) => {
 
                 if (!hubUser) {
                     // New user — insert into Hub DB using aMember password hash directly
-                        const result = await run(
-                            'INSERT INTO users (username, email, password_hash, role, status) VALUES (?, ?, ?, ?, ?)',
-                            [username, email, amUser.pass, 'user', 'active']
-                        );
-                        hubUser = { id: result.lastID };
-                        created++;
+                    const result = await run(
+                        'INSERT INTO users (username, email, password_hash, role, status) VALUES (?, ?, ?, ?, ?)',
+                        [username, email, amUser.pass, 'user', 'active']
+                    );
+                    hubUser = { id: result.lastID };
+                    created++;
                 } else {
                     // Existing user — update password hash to stay in sync
                     await run('UPDATE users SET password_hash = ? WHERE id = ?', [amUser.pass, hubUser.id]);
