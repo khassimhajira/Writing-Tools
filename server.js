@@ -512,7 +512,6 @@ app.use(async (req, res, next) => {
                     method: req.method,
                     url: `${targetUrlObj.origin}${req.url}`,
                     headers: forwardHeaders,
-                    data: req, // Pipe the raw request stream directly (Essential for POST/PUT)
                     httpsAgent: currentAgent || undefined,
                     timeout: 25000,
                     maxContentLength: Infinity,
@@ -521,6 +520,11 @@ app.use(async (req, res, next) => {
                     responseType: 'arraybuffer',
                     decompress: true // Ensure we get decompressed data for patching
                 };
+
+                // Only pipe the request stream for methods that can have a body
+                if (req.method !== 'GET' && req.method !== 'HEAD') {
+                    axiosConfig.data = req;
+                }
 
                 const response = await axios(axiosConfig);
 
