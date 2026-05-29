@@ -133,6 +133,57 @@ app.use('/hub/api', hubParsers, (req, res) => {
 
 // --- PROXY ROTATION ENGINE ---
 let proxyAgents = [];
+
+// HTTP keep-alive options applied to every HttpsProxyAgent we create. Reuses
+// TCP+TLS sessions across requests instead of doing a fresh handshake every
+// time. Saves 200-500ms per request on residential proxies. Safe defaults
+// chosen so we don't pile up too many idle sockets.
+const PROXY_AGENT_OPTS = {
+    keepAlive: true,
+    keepAliveMsecs: 1000,
+    maxSockets: 64,
+    maxFreeSockets: 16,
+    timeout: 30000,
+    scheduling: 'lifo'
+};
+
+// Determine a sensible Cache-Control header for a proxied response.
+//
+//   - HTML / JSON / API responses: `no-store`. Same as before. Auth-bearing.
+//   - Static assets (images, fonts, css, woff/2): aggressive 1-hour cache.
+//     These don't change per-user and don't carry secrets.
+//   - JS files: small private cache (5 min). They get rewritten so we want a
+//     short-but-non-zero cache to avoid re-downloading the same megabytes
+//     across page loads. Rewriting is deterministic per (domain, slug), so
+//     the same user gets the same patched bytes.
+function pickCacheControl(req, contentType, statusCode) {
+    if (statusCode && statusCode >= 400) return 'no-store';
+    const ct = (contentType || '').toLowerCase();
+    const url = req.url || '';
+
+    // Definitely never cache: HTML, JSON, RSC, API.
+    if (ct.includes('text/html')) return 'no-store';
+    if (ct.includes('application/json')) return 'no-store';
+    if (ct.includes('text/x-component')) return 'no-store';
+    if (url.includes('/api/') || url.includes('/_next/data/')) return 'no-store';
+
+    // Long-cache static assets that don't get rewritten.
+    if (/\.(png|jpe?g|gif|webp|avif|svg|ico|bmp)(\?|$)/i.test(url)) return 'private, max-age=3600';
+    if (/\.(woff2?|ttf|otf|eot)(\?|$)/i.test(url))            return 'private, max-age=86400';
+    if (/\.(css)(\?|$)/i.test(url))                            return 'private, max-age=3600';
+    if (ct.startsWith('image/'))                               return 'private, max-age=3600';
+    if (ct.startsWith('font/') || ct.includes('font/woff'))    return 'private, max-age=86400';
+    if (ct.includes('text/css'))                               return 'private, max-age=3600';
+
+    // JS files (rewritten): short private cache.
+    if (/\.(js|mjs)(\?|$)/i.test(url) || ct.includes('javascript')) {
+        return 'private, max-age=300';
+    }
+
+    // Default: don't cache to stay safe.
+    return 'no-store';
+}
+
 async function loadProxies() {
     try {
         const rows = await query('SELECT url FROM proxies WHERE status = "active"');
@@ -141,7 +192,7 @@ async function loadProxies() {
         const newAgents = [];
         urls.forEach(url => {
             try {
-                newAgents.push(new HttpsProxyAgent(url));
+                newAgents.push(new HttpsProxyAgent(url, PROXY_AGENT_OPTS));
             } catch(e) {
                 console.error(`[Proxy] Skipping invalid URL: ${url}`);
             }
@@ -152,13 +203,13 @@ async function loadProxies() {
             const envUrls = (process.env.PROXY_LIST || '').split(',').map(u => u.trim()).filter(u => u.length > 5);
             envUrls.forEach(url => {
                 try {
-                    newAgents.push(new HttpsProxyAgent(url));
+                    newAgents.push(new HttpsProxyAgent(url, PROXY_AGENT_OPTS));
                 } catch(e) {}
             });
         }
 
         proxyAgents = newAgents;
-        console.log(`[Init] ${proxyAgents.length} Proxy Agents ready.`);
+        console.log(`[Init] ${proxyAgents.length} Proxy Agents ready (keep-alive ON).`);
     } catch(e) {
         console.error('[Init] Proxy load error:', e);
     }
@@ -797,27 +848,40 @@ app.use(async (req, res, next) => {
                 } 
                 else if (contentType.includes('javascript') || req.url.includes('.js') || (contentType.includes('octet-stream') && req.url.includes('.js'))) {
                     let js = bodyBuffer.toString('utf8');
-                    
-                    // MINIMAL SURGERY: Only replace the two unambiguous browser location accessors.
-                    js = js.replace(/window\.location/g, 'globalThis.__HL__');
-                    js = js.replace(/document\.location/g, 'globalThis.__HL__');
-                    
-                    // Domain Rewriting in JS (CRITICAL: catches hardcoded absolute API URLs)
+
                     const targetDomain = targetUrlObj.host;
-                    const ownDomainRegex = new RegExp(`(https?:)?//([a-zA-Z0-9.-]*\\.)?${targetDomain.replace(/\./g, '\\.')}`, 'g');
-                    js = js.replace(ownDomainRegex, `/proxy/${service.slug}`);
-                    
-                    // Force relative paths for dynamic imports
-                    const cleanBase = proxyBase.endsWith('/') ? proxyBase.slice(0, -1) : proxyBase;
-                    js = js.replace(/from\s*["'](\/cdn\/[^"']+)["']/g, `from "${cleanBase}$1"`);
-                    js = js.replace(/import\s*\(["'](\/cdn\/[^"']+)["']\)/g, `import("${cleanBase}$1")`);
-                    
-                    // Force Cache Busting
-                    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-                    res.setHeader('Pragma', 'no-cache');
-                    res.setHeader('Expires', '0');
-                    
-                    processedBuffer = Buffer.from(js);
+                    // Skip-rewrite shortcut: if neither rewrite trigger appears
+                    // in this file, ship the original bytes untouched. Saves
+                    // multiple regex passes on big chunks of vendor bundles.
+                    const needsRewrite =
+                        js.indexOf('window.location') !== -1 ||
+                        js.indexOf('document.location') !== -1 ||
+                        js.indexOf(targetDomain) !== -1 ||
+                        js.indexOf('/cdn/') !== -1;
+
+                    if (needsRewrite) {
+                        // MINIMAL SURGERY: Only replace the two unambiguous browser location accessors.
+                        js = js.replace(/window\.location/g, 'globalThis.__HL__');
+                        js = js.replace(/document\.location/g, 'globalThis.__HL__');
+
+                        // Domain Rewriting in JS (CRITICAL: catches hardcoded absolute API URLs)
+                        const ownDomainRegex = new RegExp(`(https?:)?//([a-zA-Z0-9.-]*\\.)?${targetDomain.replace(/\./g, '\\.')}`, 'g');
+                        js = js.replace(ownDomainRegex, `/proxy/${service.slug}`);
+
+                        // Force relative paths for dynamic imports
+                        const cleanBase = proxyBase.endsWith('/') ? proxyBase.slice(0, -1) : proxyBase;
+                        js = js.replace(/from\s*["'](\/cdn\/[^"']+)["']/g, `from "${cleanBase}$1"`);
+                        js = js.replace(/import\s*\(["'](\/cdn\/[^"']+)["']\)/g, `import("${cleanBase}$1")`);
+
+                        processedBuffer = Buffer.from(js);
+                    } else {
+                        // No rewrite needed — pass original bytes straight through.
+                        processedBuffer = bodyBuffer;
+                    }
+
+                    // Smart cache: short private cache so the browser doesn't
+                    // re-download the same patched JS on every page nav.
+                    res.setHeader('Cache-Control', pickCacheControl(req, contentType, response.status));
                 }
 
                 // --- SEND RESPONSE ---
@@ -962,7 +1026,11 @@ proxy.on('proxyRes', (proxyRes, req, res) => {
                 try { res.setHeader(key, val); } catch(e) {}
             });
 
-            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+            // Smart cache header. Static assets (images, fonts, css) get a
+            // private cache so the browser doesn't re-download them through
+            // the proxy on every page navigation. Auth-bearing responses
+            // (HTML / JSON / API) keep `no-store`.
+            res.setHeader('Cache-Control', pickCacheControl(req, proxyRes.headers['content-type'], proxyRes.statusCode));
 
 
             // Session Sync (Mobile-Optimized)
