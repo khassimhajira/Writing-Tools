@@ -28,6 +28,66 @@
                 border-radius: 12px !important;
             }
         }
+        /* Floating glass-morph usage pill — mirrors #portal-exit but on the right */
+        #portal-usage {
+            position: fixed;
+            bottom: 40px;
+            right: 40px;
+            z-index: 10001;
+            min-width: 240px;
+            max-width: 88vw;
+            padding: 14px 18px;
+            border-radius: 22px;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            color: #fff;
+            backdrop-filter: blur(18px) saturate(180%);
+            -webkit-backdrop-filter: blur(18px) saturate(180%);
+            background: rgba(15, 23, 42, 0.78);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            box-shadow: 0 14px 36px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255,255,255,0.1);
+            transition: opacity 0.2s ease, transform 0.2s ease;
+            user-select: none;
+            font-variant-numeric: tabular-nums;
+        }
+        #portal-usage .pu-row {
+            display: flex; align-items: center; justify-content: space-between; gap: 12px;
+        }
+        #portal-usage .pu-label {
+            font-size: 0.68rem; font-weight: 700; letter-spacing: 0.06em;
+            text-transform: uppercase;
+        }
+        #portal-usage .pu-num {
+            font-size: 1rem; font-weight: 800; color: #fff;
+        }
+        #portal-usage .pu-num small {
+            opacity: 0.55; font-weight: 600; font-size: 0.78rem;
+        }
+        #portal-usage .pu-bar {
+            height: 6px; border-radius: 99px;
+            background: rgba(255,255,255,0.10);
+            overflow: hidden; margin-top: 9px;
+        }
+        #portal-usage .pu-fill {
+            height: 100%; border-radius: 99px;
+            transition: width 0.45s cubic-bezier(.2,.9,.2,1), background 0.3s ease;
+        }
+        #portal-usage .pu-foot {
+            display: flex; justify-content: space-between; align-items: center;
+            margin-top: 9px; font-size: 0.7rem; color: rgba(255,255,255,0.62);
+        }
+        #portal-usage .pu-reset {
+            margin-top: 7px; font-size: 0.72rem; color: #fef3c7;
+        }
+        @media (max-width: 600px) {
+            #portal-usage {
+                bottom: 20px; right: 16px; left: auto;
+                min-width: 0;
+                width: calc(100vw - 32px);
+                max-width: 320px;
+                padding: 11px 14px;
+                border-radius: 16px;
+            }
+        }
     </style>
 </head>
 <body>
@@ -69,6 +129,7 @@
         <svg style="width:18px;height:18px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"></path></svg>
         Back to Dashboard
     </button>
+    <div id="portal-usage" style="display:none;"></div>
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
@@ -211,6 +272,7 @@
             frame.src = '/proxy/' + slug.trim();
             frame.style.display = 'block';
             document.getElementById('portal-exit').style.display = 'flex';
+            startPortalUsage(slug.trim());
         }
 
         function exitPortal() {
@@ -218,7 +280,106 @@
             document.getElementById('portal-frame').src = 'about:blank';
             document.getElementById('portal-frame').style.display = 'none';
             document.getElementById('portal-exit').style.display = 'none';
+            stopPortalUsage();
         }
+
+        // ---- Floating Usage Pill (bottom-right, mirrors Back to Dashboard) ----
+        let _puData = null, _puPoll = null, _puTick = null, _puSlug = null;
+        function _puPad(n) { return n < 10 ? '0' + n : '' + n; }
+        function _puFmt(ms) {
+            if (ms <= 0) return 'resetting…';
+            const t = Math.floor(ms / 1000);
+            const h = Math.floor(t / 3600);
+            const m = Math.floor((t % 3600) / 60);
+            const s = t % 60;
+            if (h > 0) return h + 'h ' + _puPad(m) + 'm ' + _puPad(s) + 's';
+            if (m > 0) return m + 'm ' + _puPad(s) + 's';
+            return s + 's';
+        }
+        async function _puFetch() {
+            if (!_puSlug) return;
+            try {
+                const r = await fetch('/hub/api/auth/my-usage/' + encodeURIComponent(_puSlug), { credentials: 'include' });
+                if (!r.ok) return;
+                _puData = await r.json();
+                _puPaint();
+            } catch(_) {}
+        }
+        function _puPaint() {
+            const el = document.getElementById('portal-usage');
+            if (!el) return;
+            if (!_puData || !_puData.limited) { el.style.display = 'none'; return; }
+
+            const limit = _puData.service.daily_limit;
+            const used = _puData.used || 0;
+            const remaining = _puData.remaining != null ? _puData.remaining : Math.max(0, limit - used);
+            const pct = limit > 0 ? Math.min(100, (used / limit) * 100) : 0;
+            const tone = remaining <= 0 ? 'crit' : (remaining / limit <= 0.33 ? 'warn' : 'ok');
+            const palette = {
+                ok:   { fill: 'linear-gradient(90deg,#34d399,#10b981)', text: '#a7f3d0', label: 'Daily usage' },
+                warn: { fill: 'linear-gradient(90deg,#fbbf24,#f59e0b)', text: '#fde68a', label: 'Running low' },
+                crit: { fill: 'linear-gradient(90deg,#f87171,#ef4444)', text: '#fecaca', label: 'Limit reached' }
+            }[tone];
+
+            const resetLine = (_puData.reset_at && remaining <= 0)
+                ? '<div class="pu-reset">resets in <span id="pu-reset-cd">…</span></div>'
+                : '';
+
+            el.innerHTML =
+                '<div class="pu-row">' +
+                    '<div class="pu-label" style="color:' + palette.text + '">' + palette.label + '</div>' +
+                    '<div class="pu-num">' + used + '<small> / ' + limit + '</small></div>' +
+                '</div>' +
+                '<div class="pu-bar"><div class="pu-fill" style="width:' + pct + '%; background:' + palette.fill + ';"></div></div>' +
+                '<div class="pu-foot">' +
+                    '<span>' + (remaining > 0 ? (remaining + ' left today') : 'Daily limit reached') + '</span>' +
+                    '<span style="font-size:0.62rem;opacity:0.85;">' + _puData.service.name + '</span>' +
+                '</div>' +
+                resetLine;
+
+            el.style.display = 'block';
+
+            // Restart ticker.
+            if (_puTick) { clearInterval(_puTick); _puTick = null; }
+            if (_puData.reset_at && remaining <= 0) {
+                const tick = () => {
+                    const span = document.getElementById('pu-reset-cd');
+                    if (!span) return;
+                    const ms = _puData.reset_at - Date.now();
+                    if (ms <= 0) {
+                        span.textContent = 'resetting…';
+                        clearInterval(_puTick); _puTick = null;
+                        setTimeout(_puFetch, 1500);
+                    } else {
+                        span.textContent = _puFmt(ms);
+                    }
+                };
+                tick();
+                _puTick = setInterval(tick, 1000);
+            }
+        }
+        function startPortalUsage(slug) {
+            _puSlug = slug;
+            _puFetch();
+            if (_puPoll) clearInterval(_puPoll);
+            _puPoll = setInterval(_puFetch, 8000);
+        }
+        function stopPortalUsage() {
+            _puSlug = null;
+            _puData = null;
+            if (_puPoll) { clearInterval(_puPoll); _puPoll = null; }
+            if (_puTick) { clearInterval(_puTick); _puTick = null; }
+            const el = document.getElementById('portal-usage');
+            if (el) el.style.display = 'none';
+        }
+        // The iframe forwards 429s and successful POST/PUTs as postMessage so
+        // the pill updates without waiting for the next 8s poll.
+        window.addEventListener('message', (e) => {
+            if (!e || !e.data || !e.data.type) return;
+            if (e.data.type === 'hub:limit-toast' || e.data.type === 'hub:action-done') {
+                if (_puSlug) setTimeout(_puFetch, 600);
+            }
+        });
 
         socket.on('force_refresh', () => init());
         socket.on('global_reload', () => init());
