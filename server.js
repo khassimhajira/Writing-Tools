@@ -465,7 +465,36 @@ app.use(async (req, res, next) => {
         // BEGIN IMMEDIATE) so two parallel requests cannot both slip past.
         const dailyLimit = service.daily_limit ? parseInt(service.daily_limit, 10) : 0;
         const isWriteRequest = req.method === 'POST' || req.method === 'PUT';
-        if (dailyLimit > 0 && isWriteRequest) {
+
+        // Heuristic for what counts as a "real" billable action vs. UI noise
+        // like "refresh alternatives" / synonym lookup / autosave / telemetry.
+        //
+        // 1. Skip URLs that smell like word-level helpers (alternatives,
+        //    synonyms, regenerate-word, etc).
+        // 2. Skip tiny request bodies. A full humanize carries the whole
+        //    pasted text (hundreds to thousands of bytes); an alternatives
+        //    re-roll carries a word or a short range (typically <100 bytes).
+        const lowUrl = (req.url || '').toLowerCase();
+        const looksLikeWordHelper = (
+            lowUrl.includes('alternative') ||
+            lowUrl.includes('synonym') ||
+            lowUrl.includes('regenerate') ||
+            lowUrl.includes('autosave') ||
+            lowUrl.includes('telemetry') ||
+            lowUrl.includes('analytics') ||
+            lowUrl.includes('feedback') ||
+            lowUrl.includes('rate') && lowUrl.includes('limit')
+        );
+        const contentLength = parseInt(req.headers['content-length'] || '0', 10) || 0;
+        // Threshold tuned for StealthWriter: a real humanize submission is
+        // always larger than 200 bytes (text + level + model fields). Tweak
+        // here if needed.
+        const BILLABLE_MIN_BYTES = 200;
+        const isBillableAction = isWriteRequest &&
+                                  !looksLikeWordHelper &&
+                                  contentLength >= BILLABLE_MIN_BYTES;
+
+        if (dailyLimit > 0 && isBillableAction) {
             // Debounce: if the same user fired another POST inside the window,
             // don't count it again — but ALSO don't run the gate, so we don't
             // double-count or over-throttle. The first POST already recorded.
