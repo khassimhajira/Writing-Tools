@@ -421,6 +421,33 @@ app.use(async (req, res, next) => {
                     const hrsLeft = (minsLeft / 60).toFixed(1);
                     res.status(429);
                     res.setHeader('Retry-After', Math.ceil((resetAt - Date.now()) / 1000));
+
+                    // Detect whether this is an API/XHR call (the front-end of
+                    // StealthWriter / ChatGPT etc expects JSON for these) vs a
+                    // top-level page navigation (where we render full HTML).
+                    const accept = (req.headers['accept'] || '').toLowerCase();
+                    const isApiPath = /\/api\/|\.json($|\?)/i.test(req.url);
+                    const wantsJson = accept.includes('application/json') ||
+                                       req.headers['x-requested-with'] === 'XMLHttpRequest' ||
+                                       isApiPath;
+
+                    const friendlyMsg = `You've used your daily allowance of ${dailyLimit} ${service.name} actions. Your access resets in about ${hrsLeft} hours (${minsLeft} min). Contact your administrator if you need more.`;
+
+                    if (wantsJson) {
+                        res.setHeader('Content-Type', 'application/json');
+                        return res.send(JSON.stringify({
+                            error: friendlyMsg,
+                            message: friendlyMsg,
+                            detail: friendlyMsg,
+                            limit_reached: true,
+                            daily_limit: dailyLimit,
+                            used: count,
+                            reset_at: resetAt,
+                            reset_in_minutes: minsLeft,
+                            reset_in_hours: Number(hrsLeft)
+                        }));
+                    }
+
                     return res.send(`
                         <div style="font-family:sans-serif;color:#0f172a;text-align:center;padding:60px 20px;max-width:560px;margin:8% auto;background:#fff;border-radius:12px;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
                             <div style="font-size:48px;margin-bottom:8px;">⏳</div>
@@ -443,6 +470,10 @@ app.use(async (req, res, next) => {
                     });
                     // Notify admins for the live usage view.
                     io.to('admins').emit('usage_recorded', {
+                        user_id: verified.id, service_id: service.id, ts: Date.now()
+                    });
+                    // Notify the user's own session so the dashboard badge refreshes.
+                    io.to(`user_${verified.id}`).emit('usage_recorded', {
                         user_id: verified.id, service_id: service.id, ts: Date.now()
                     });
                 }
@@ -1034,7 +1065,65 @@ proxy.on('proxyRes', (proxyRes, req, res) => {
                     if (typeof input === 'string' && !input.startsWith('http') && !input.startsWith(proxyPrefix) && !input.startsWith('/cdn/')) {
                         input = proxyPrefix + (input.startsWith('/') ? '' : '/') + input;
                     }
-                    return origFetch.apply(this, arguments);
+                    return origFetch.apply(this, arguments).then(handle429Response);
+                };
+
+                // ---- Daily-limit toast ----
+                // When the proxy gate returns 429 with a JSON body, show a
+                // sleek glass-morph toast over the page so the user gets a
+                // clean, branded message instead of the host site's cryptic
+                // "Failed to connect" type errors.
+                function showLimitToast(detail) {
+                    try {
+                        const existing = document.getElementById('hub-limit-toast');
+                        if (existing) existing.remove();
+                        const wrap = document.createElement('div');
+                        wrap.id = 'hub-limit-toast';
+                        wrap.style.cssText = 'position:fixed;top:24px;left:50%;transform:translateX(-50%);z-index:2147483647;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;';
+                        const hours = detail && detail.reset_in_hours != null ? detail.reset_in_hours : null;
+                        const used = detail && detail.used != null ? detail.used : '';
+                        const cap = detail && detail.daily_limit != null ? detail.daily_limit : '';
+                        const resetTxt = (hours != null) ? ('about ' + hours + ' hours') : 'tomorrow';
+                        wrap.innerHTML = '<div style="min-width:340px;max-width:480px;padding:16px 20px;border-radius:14px;backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);background:rgba(15,23,42,0.85);color:#fff;box-shadow:0 18px 48px rgba(0,0,0,0.45),inset 0 1px 0 rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.12);display:flex;gap:14px;align-items:flex-start;animation:hub-toast-in 0.35s cubic-bezier(.2,.9,.2,1);">' +
+                            '<div style="font-size:24px;line-height:1;">⏳</div>' +
+                            '<div style="flex:1;">' +
+                                '<div style="font-weight:700;font-size:0.95rem;margin-bottom:4px;">Daily limit reached</div>' +
+                                '<div style="font-size:0.82rem;color:#cbd5e1;line-height:1.4;">You have used ' + used + ' / ' + cap + ' of your daily allowance. Access resets in ' + resetTxt + '. Contact your admin if you need more.</div>' +
+                            '</div>' +
+                            '<button id="hub-limit-toast-close" style="background:transparent;border:none;color:rgba(255,255,255,0.6);cursor:pointer;font-size:18px;padding:0 4px;line-height:1;">×</button>' +
+                        '</div>';
+                        const style = document.createElement('style');
+                        style.textContent = '@keyframes hub-toast-in{from{opacity:0;transform:translate(-50%,-12px);}to{opacity:1;transform:translate(-50%,0);}}';
+                        document.head.appendChild(style);
+                        document.body.appendChild(wrap);
+                        document.getElementById('hub-limit-toast-close').onclick = () => wrap.remove();
+                        // Auto-dismiss after 12s.
+                        setTimeout(() => { if (wrap.parentNode) wrap.remove(); }, 12000);
+                    } catch(e) { console.warn('[Hub] toast failed:', e); }
+                }
+
+                async function handle429Response(response) {
+                    if (!response || response.status !== 429) return response;
+                    try {
+                        const clone = response.clone();
+                        const data = await clone.json();
+                        if (data && data.limit_reached) showLimitToast(data);
+                    } catch(e) { /* not JSON, ignore */ }
+                    return response;
+                }
+
+                // Wrap XHR responses so we can also catch 429s on classic AJAX.
+                const origXhrSend = XMLHttpRequest.prototype.send;
+                XMLHttpRequest.prototype.send = function() {
+                    this.addEventListener('load', function() {
+                        if (this.status === 429) {
+                            try {
+                                const data = JSON.parse(this.responseText || '{}');
+                                if (data && data.limit_reached) showLimitToast(data);
+                            } catch(_) {}
+                        }
+                    });
+                    return origXhrSend.apply(this, arguments);
                 };
 
                 console.log('[Hub] Pathname cloaking active. Prefix:', proxyPrefix);

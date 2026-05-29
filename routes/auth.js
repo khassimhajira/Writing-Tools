@@ -154,11 +154,28 @@ router.get('/services', async (req, res) => {
         }
 
         const services = await query(`
-            SELECT s.name, s.slug, s.icon_svg, s.text_svg
+            SELECT s.id, s.name, s.slug, s.icon_svg, s.text_svg, s.daily_limit
             FROM user_assignments a
             JOIN services s ON a.service_id = s.id
             WHERE a.user_id = ?
         `, [verified.id]);
+
+        // Attach today's usage count and reset hint per service. Cheap query;
+        // used by the dashboard badge.
+        const since = Date.now() - 24 * 60 * 60 * 1000;
+        for (const svc of services) {
+            const usageRow = await get(
+                'SELECT COUNT(*) AS used, MIN(used_at) AS oldest FROM service_usage WHERE user_id = ? AND service_id = ? AND used_at >= ?',
+                [verified.id, svc.id, since]
+            );
+            svc.used_today = (usageRow && usageRow.used) || 0;
+            if (svc.daily_limit && usageRow && usageRow.oldest) {
+                const resetAt = usageRow.oldest + 24 * 60 * 60 * 1000;
+                svc.reset_in_minutes = Math.max(0, Math.ceil((resetAt - Date.now()) / 60000));
+            } else {
+                svc.reset_in_minutes = null;
+            }
+        }
 
         res.json(services);
     } catch(e) {

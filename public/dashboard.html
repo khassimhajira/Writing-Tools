@@ -83,8 +83,40 @@
                     document.getElementById('ready-view').style.display = 'flex';
                     document.getElementById('no-access-view').style.display = 'none';
                     
-                    document.getElementById('services-grid').innerHTML = services.map(s => `
-                        <div class="service-wrapper">
+                    document.getElementById('services-grid').innerHTML = services.map(s => {
+                        const limit = s.daily_limit || 0;
+                        const used = s.used_today || 0;
+                        const remaining = limit ? Math.max(0, limit - used) : null;
+                        let badgeHTML = '';
+                        if (limit > 0) {
+                            // Three states: plenty (>33%), warning (10-33%), critical (<=10% or 0).
+                            const pct = remaining / limit;
+                            const tone = remaining <= 0 ? 'crit' : (pct <= 0.33 ? 'warn' : 'ok');
+                            const colors = {
+                                ok:   { ring: 'rgba(16,185,129,0.65)',  text: '#a7f3d0' },
+                                warn: { ring: 'rgba(245,158,11,0.7)',   text: '#fde68a' },
+                                crit: { ring: 'rgba(248,113,113,0.75)', text: '#fecaca' }
+                            }[tone];
+                            const resetTxt = (s.reset_in_minutes != null && remaining <= 0)
+                                ? ('resets in ' + (s.reset_in_minutes < 60 ? (s.reset_in_minutes + ' min') : (Math.ceil(s.reset_in_minutes / 60) + 'h')))
+                                : 'today';
+                            const labelTxt = remaining > 0
+                                ? (remaining + ' / ' + limit + ' left ' + resetTxt)
+                                : ('Limit reached, ' + resetTxt);
+                            badgeHTML = '<div class="service-usage-badge" style="' +
+                                'position:absolute;top:8px;right:8px;z-index:5;' +
+                                'padding:5px 10px;border-radius:999px;font-size:0.65rem;font-weight:600;letter-spacing:0.02em;' +
+                                'color:' + colors.text + ';' +
+                                'backdrop-filter:blur(14px) saturate(180%);-webkit-backdrop-filter:blur(14px) saturate(180%);' +
+                                'background:rgba(15,23,42,0.55);' +
+                                'border:1px solid ' + colors.ring + ';' +
+                                'box-shadow:0 4px 14px rgba(0,0,0,0.25),inset 0 1px 0 rgba(255,255,255,0.1);' +
+                                'pointer-events:none;white-space:nowrap;' +
+                            '">' + labelTxt + '</div>';
+                        }
+                        return `
+                        <div class="service-wrapper" style="position:relative;">
+                            ${badgeHTML}
                             <div class="service-logo-card animate-in" onclick="launchPortal('${s.slug}')" title="Launch ${s.name}">
                                 <div class="logo-composite ${s.slug === 'stealth' ? 'invert-dark' : ''}">
                                     <div class="logo-icon">
@@ -99,7 +131,8 @@
                                 <div class="status-overlay"></div>
                             </div>
                         </div>
-                    `).join('');
+                        `;
+                    }).join('');
 
 
                 } else {
@@ -129,6 +162,11 @@
 
         socket.on('force_refresh', () => init());
         socket.on('global_reload', () => init());
+        socket.on('usage_recorded', (data) => {
+            // The current user just consumed a use somewhere. Refresh badges.
+            // (No-op if it was a different user — server scopes the event by room.)
+            if (currentUser) init();
+        });
 
         document.getElementById('logout-btn').onclick = () => { window.location.href = '/hub/api/auth/logout'; };
         const themeBtn = document.getElementById('theme-btn'), themeCont = document.getElementById('theme-icon-container');
