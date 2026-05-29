@@ -257,4 +257,59 @@ router.get('/am-login', async (req, res) => {
     }
 });
 
+// Lightweight usage endpoint used by the in-iframe usage card.
+// Returns the calling user's current usage of one service (by slug), so the
+// card can show "You have used X of Y, resets in Z".
+//
+// Authenticated via the same hub cookie as everything else. No usage rows
+// are written by this route — it's purely a read.
+router.get('/my-usage/:slug', async (req, res) => {
+    const token = req.cookies.stealth_hub_token;
+    if (!token) return res.status(401).json({ error: 'Not authenticated' });
+
+    try {
+        const verified = jwt.verify(token, JWT_SECRET);
+        const service = await get(
+            'SELECT id, name, slug, daily_limit FROM services WHERE slug = ?',
+            [req.params.slug]
+        );
+        if (!service) return res.status(404).json({ error: 'Service not found' });
+
+        const limit = service.daily_limit && service.daily_limit > 0 ? service.daily_limit : 0;
+        if (!limit) {
+            // No cap on this service — caller should hide the card.
+            return res.json({
+                service: { name: service.name, slug: service.slug, daily_limit: null },
+                limited: false
+            });
+        }
+
+        const since = Date.now() - 24 * 60 * 60 * 1000;
+        const { db } = require('../database');
+        const usage = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT COUNT(*) AS used, MIN(used_at) AS oldest FROM service_usage WHERE user_id = ? AND service_id = ? AND used_at >= ?',
+                [verified.id, service.id, since],
+                (err, row) => err ? reject(err) : resolve(row || { used: 0, oldest: null })
+            );
+        });
+
+        const used = usage.used || 0;
+        const remaining = Math.max(0, limit - used);
+        const resetAt = (used > 0 && usage.oldest) ? usage.oldest + 24 * 60 * 60 * 1000 : null;
+
+        res.json({
+            service: { name: service.name, slug: service.slug, daily_limit: limit },
+            limited: true,
+            used,
+            remaining,
+            reset_at: resetAt,
+            now: Date.now()
+        });
+    } catch(e) {
+        console.error('my-usage error:', e);
+        res.status(401).json({ error: 'Invalid token' });
+    }
+});
+
 module.exports = { router, JWT_SECRET };

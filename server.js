@@ -1122,6 +1122,7 @@ proxy.on('proxyRes', (proxyRes, req, res) => {
                 // 3. XHR/Fetch URL Rewriting
                 const origOpen = XMLHttpRequest.prototype.open;
                 XMLHttpRequest.prototype.open = function(method, url) {
+                    this.__hubMethod = method; // captured for the action-done event below
                     if (url && !url.startsWith('http') && !url.startsWith(proxyPrefix) && !url.startsWith('/cdn/')) {
                         url = proxyPrefix + (url.startsWith('/') ? '' : '/') + url;
                     }
@@ -1133,7 +1134,17 @@ proxy.on('proxyRes', (proxyRes, req, res) => {
                     if (typeof input === 'string' && !input.startsWith('http') && !input.startsWith(proxyPrefix) && !input.startsWith('/cdn/')) {
                         input = proxyPrefix + (input.startsWith('/') ? '' : '/') + input;
                     }
-                    return origFetch.apply(this, arguments).then(handle429Response);
+                    const method = (init && init.method) || (typeof input === 'object' && input && input.method) || 'GET';
+                    return origFetch.apply(this, arguments).then(async (resp) => {
+                        const r = await handle429Response(resp);
+                        // After any successful POST/PUT, nudge the usage card to refresh.
+                        try {
+                            if (r && r.ok && (method === 'POST' || method === 'PUT')) {
+                                document.dispatchEvent(new Event('hub:action-done'));
+                            }
+                        } catch(_) {}
+                        return r;
+                    });
                 };
 
                 // ---- Daily-limit toast ----
@@ -1214,7 +1225,11 @@ proxy.on('proxyRes', (proxyRes, req, res) => {
                     try {
                         const clone = response.clone();
                         const data = await clone.json();
-                        if (data && data.limit_reached) showLimitToast(data);
+                        if (data && data.limit_reached) {
+                            showLimitToast(data);
+                            // Tell the usage card to refresh immediately.
+                            try { document.dispatchEvent(new Event('hub:limit-toast')); } catch(_) {}
+                        }
                     } catch(e) { /* not JSON, ignore */ }
                     return response;
                 }
@@ -1222,18 +1237,162 @@ proxy.on('proxyRes', (proxyRes, req, res) => {
                 // Wrap XHR responses so we can also catch 429s on classic AJAX.
                 const origXhrSend = XMLHttpRequest.prototype.send;
                 XMLHttpRequest.prototype.send = function() {
+                    const xhr = this;
                     this.addEventListener('load', function() {
                         if (this.status === 429) {
                             try {
                                 const data = JSON.parse(this.responseText || '{}');
-                                if (data && data.limit_reached) showLimitToast(data);
+                                if (data && data.limit_reached) {
+                                    showLimitToast(data);
+                                    try { document.dispatchEvent(new Event('hub:limit-toast')); } catch(_) {}
+                                }
                             } catch(_) {}
+                        } else if (this.status >= 200 && this.status < 300) {
+                            const m = (xhr.__hubMethod || '').toUpperCase();
+                            if (m === 'POST' || m === 'PUT') {
+                                try { document.dispatchEvent(new Event('hub:action-done')); } catch(_) {}
+                            }
                         }
                     });
                     return origXhrSend.apply(this, arguments);
                 };
-
                 console.log('[Hub] Pathname cloaking active. Prefix:', proxyPrefix);
+
+                // ---- Daily Usage Card ----
+                // Sleek glass-morph card pinned to the right side of the page,
+                // showing "X / Y used today" + live ticking countdown when at
+                // the cap. Card auto-hides when the service has no daily limit
+                // configured. Polls every 8s and immediately refreshes on a 429.
+                (function() {
+                    const slug = window.location.pathname.split('/')[2];
+                    if (!slug) return;
+                    let cardData = null;
+                    let cardEl = null;
+                    let tickInterval = null;
+                    let pollInterval = null;
+
+                    function pad(n) { return n < 10 ? '0' + n : '' + n; }
+                    function fmtCountdown(ms) {
+                        if (ms <= 0) return 'resetting…';
+                        const t = Math.floor(ms / 1000);
+                        const h = Math.floor(t / 3600);
+                        const m = Math.floor((t % 3600) / 60);
+                        const s = t % 60;
+                        if (h > 0) return h + 'h ' + pad(m) + 'm ' + pad(s) + 's';
+                        if (m > 0) return m + 'm ' + pad(s) + 's';
+                        return s + 's';
+                    }
+
+                    function ensureCard() {
+                        if (cardEl && cardEl.isConnected) return cardEl;
+                        cardEl = document.createElement('div');
+                        cardEl.id = 'hub-usage-card';
+                        cardEl.style.cssText = [
+                            'position:fixed', 'top:80px', 'right:14px', 'z-index:2147483646',
+                            'width:200px', 'max-width:46vw',
+                            'padding:12px 14px', 'border-radius:14px',
+                            'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif',
+                            'backdrop-filter:blur(18px) saturate(180%)',
+                            '-webkit-backdrop-filter:blur(18px) saturate(180%)',
+                            'background:rgba(15,23,42,0.78)',
+                            'color:#fff',
+                            'box-shadow:0 14px 36px rgba(0,0,0,0.32),inset 0 1px 0 rgba(255,255,255,0.10)',
+                            'border:1px solid rgba(255,255,255,0.12)',
+                            'transition:opacity 0.2s ease, transform 0.2s ease',
+                            'pointer-events:auto',
+                            'user-select:none'
+                        ].join(';') + ';';
+                        const style = document.createElement('style');
+                        style.textContent = [
+                            '#hub-usage-card .hub-uc-bar{height:6px;border-radius:99px;background:rgba(255,255,255,0.10);overflow:hidden;margin-top:8px;}',
+                            '#hub-usage-card .hub-uc-fill{height:100%;border-radius:99px;transition:width 0.4s ease, background 0.3s ease;}',
+                            '#hub-usage-card .hub-uc-num{font-variant-numeric:tabular-nums;}',
+                            '@media (max-width: 600px){#hub-usage-card{top:auto !important;bottom:14px !important;right:10px !important;width:170px !important;padding:10px 12px !important;}}'
+                        ].join('\\n');
+                        document.head.appendChild(style);
+                        document.body.appendChild(cardEl);
+                        return cardEl;
+                    }
+
+                    function removeCard() {
+                        if (cardEl && cardEl.parentNode) cardEl.parentNode.removeChild(cardEl);
+                        cardEl = null;
+                        if (tickInterval) { clearInterval(tickInterval); tickInterval = null; }
+                    }
+
+                    function paint() {
+                        if (!cardData || !cardData.limited) { removeCard(); return; }
+                        const el = ensureCard();
+                        const limit = cardData.service.daily_limit;
+                        const used = cardData.used || 0;
+                        const remaining = cardData.remaining != null ? cardData.remaining : Math.max(0, limit - used);
+                        const pct = limit > 0 ? Math.min(100, (used / limit) * 100) : 0;
+                        // Three tones: ok / warn / crit (mirror dashboard badge).
+                        const tone = remaining <= 0 ? 'crit' : (remaining / limit <= 0.33 ? 'warn' : 'ok');
+                        const palette = {
+                            ok:   { fill: 'linear-gradient(90deg,#34d399,#10b981)', text: '#a7f3d0', label: 'Daily usage' },
+                            warn: { fill: 'linear-gradient(90deg,#fbbf24,#f59e0b)', text: '#fde68a', label: 'Running low' },
+                            crit: { fill: 'linear-gradient(90deg,#f87171,#ef4444)', text: '#fecaca', label: 'Limit reached' }
+                        }[tone];
+
+                        const resetLine = (cardData.reset_at && remaining <= 0)
+                            ? '<div style="margin-top:6px;font-size:0.7rem;color:#fef3c7;">resets in <span class="hub-uc-num" id="hub-uc-reset">…</span></div>'
+                            : '';
+
+                        el.innerHTML = (
+                            '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">' +
+                                '<div style="font-size:0.7rem;letter-spacing:0.04em;text-transform:uppercase;color:' + palette.text + ';font-weight:700;">' + palette.label + '</div>' +
+                                '<div class="hub-uc-num" style="font-size:0.95rem;font-weight:800;color:#fff;">' + used + '<span style="opacity:0.55;font-weight:600;font-size:0.78rem;"> / ' + limit + '</span></div>' +
+                            '</div>' +
+                            '<div class="hub-uc-bar"><div class="hub-uc-fill" style="width:' + pct + '%;background:' + palette.fill + ';"></div></div>' +
+                            '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;font-size:0.7rem;color:rgba(255,255,255,0.62);">' +
+                                '<span>' + (remaining > 0 ? (remaining + ' left') : 'used up') + '</span>' +
+                                '<span style="font-size:0.62rem;">' + cardData.service.name + '</span>' +
+                            '</div>' +
+                            resetLine
+                        );
+
+                        if (tickInterval) { clearInterval(tickInterval); tickInterval = null; }
+                        if (cardData.reset_at && remaining <= 0) {
+                            const tick = () => {
+                                const ms = cardData.reset_at - Date.now();
+                                const span = document.getElementById('hub-uc-reset');
+                                if (!span) return;
+                                if (ms <= 0) {
+                                    span.textContent = 'resetting…';
+                                    clearInterval(tickInterval);
+                                    tickInterval = null;
+                                    setTimeout(refresh, 1500);
+                                } else {
+                                    span.textContent = fmtCountdown(ms);
+                                }
+                            };
+                            tick();
+                            tickInterval = setInterval(tick, 1000);
+                        }
+                    }
+
+                    async function refresh() {
+                        try {
+                            const r = await fetch('/hub/api/auth/my-usage/' + encodeURIComponent(slug), { credentials: 'include' });
+                            if (!r.ok) { return; }
+                            cardData = await r.json();
+                            paint();
+                        } catch(_) { /* network errors are silent — card just stays as is */ }
+                    }
+
+                    // First fetch + periodic poll. Faster cadence than 30s so
+                    // it feels responsive but cheap enough not to matter.
+                    refresh();
+                    pollInterval = setInterval(refresh, 8000);
+
+                    // Bump it immediately when a 429 fires (already handled by
+                    // the toast hook above — this just refreshes the card too).
+                    document.addEventListener('hub:limit-toast', refresh);
+                    // Refresh right after any successful POST/PUT so the
+                    // counter ticks up immediately, not 8s later.
+                    document.addEventListener('hub:action-done', () => setTimeout(refresh, 800));
+                })();
             })();
             </script>
             `;
