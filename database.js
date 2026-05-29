@@ -4,11 +4,56 @@ const path = require('path');
 const bcrypt = require('bcryptjs');
 const fs = require('fs');
 
-// --- LOCAL DATABASE STORAGE ---
-// The database is stored in the local folder. 
-// Note: On Hostinger, this means the data will be DELETED every time you push or rebuild.
-let dbPath = process.env.DATABASE_PATH || path.join(__dirname, 'stealth.db');
-console.log('[Database] Using local storage at:', dbPath);
+// --- DATABASE STORAGE ---
+// Where the SQLite file lives, in priority order:
+//   1. process.env.DATABASE_PATH        — explicit override (recommended in prod)
+//   2. <HOME>/stealth_data/stealth.db   — auto-detected persistent location
+//                                         (used on Hostinger so the DB survives
+//                                         deploys that replace the app folder)
+//   3. ./stealth.db                     — fallback, lives inside the repo
+//                                         (fine for local dev, wiped by Hostinger
+//                                         deploys — never use this in production)
+function resolveDbPath() {
+    if (process.env.DATABASE_PATH && process.env.DATABASE_PATH.trim().length > 0) {
+        return { path: process.env.DATABASE_PATH.trim(), source: 'DATABASE_PATH env' };
+    }
+
+    const home = process.env.HOME || process.env.USERPROFILE;
+    if (home) {
+        const persistentDir = path.join(home, 'stealth_data');
+        const persistentFile = path.join(persistentDir, 'stealth.db');
+        // Use this location if either the directory or the DB file already
+        // exists. Don't auto-create it here — that's the user's call. We don't
+        // want a fresh dev clone to silently grow a DB outside the repo.
+        try {
+            if (fs.existsSync(persistentFile) || fs.existsSync(persistentDir)) {
+                return { path: persistentFile, source: 'auto-detected persistent dir' };
+            }
+        } catch (_) { /* ignore */ }
+    }
+
+    return { path: path.join(__dirname, 'stealth.db'), source: 'local fallback (NOT persistent on Hostinger)' };
+}
+
+const resolved = resolveDbPath();
+let dbPath = path.resolve(resolved.path);
+
+// Make sure the parent directory exists. SQLite will create the file itself,
+// but it won't create missing directories.
+try {
+    const dbDir = path.dirname(dbPath);
+    if (!fs.existsSync(dbDir)) {
+        fs.mkdirSync(dbDir, { recursive: true });
+        console.log('[Database] Created parent directory:', dbDir);
+    }
+} catch (e) {
+    console.error('[Database] Failed to ensure parent directory exists:', e.message);
+}
+
+console.log(`[Database] Using SQLite file at: ${dbPath}  (source: ${resolved.source})`);
+if (resolved.source.startsWith('local fallback')) {
+    console.warn('[Database] WARNING: DB lives inside the app folder and will be wiped on the next deploy. Set DATABASE_PATH or create ~/stealth_data/ to use a persistent location.');
+}
 
 const db = new sqlite3.Database(dbPath, (err) => {
     if (err) {
