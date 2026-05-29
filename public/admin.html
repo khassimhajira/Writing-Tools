@@ -528,11 +528,24 @@
                 text_svg: document.getElementById('service-text').value, 
                 injection_js: document.getElementById('service-js').value,
                 amember_product_id: document.getElementById('service-amember-id').value.trim(),
-                daily_limit: document.getElementById('service-daily-limit').value.trim() || null
+                daily_limit: (() => {
+                    const raw = document.getElementById('service-daily-limit').value.trim();
+                    if (!raw) return null;
+                    const n = parseInt(raw, 10);
+                    return (Number.isFinite(n) && n > 0) ? n : null;
+                })()
             };
             const method = id ? 'PUT' : 'POST', url = id ? `/hub/api/admin/services/${id}` : '/hub/api/admin/services';
             const res = await fetch(url, { method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
-            if (res.ok) { showAlert('Saved'); closeServiceModal(); loadData(); }
+            if (res.ok) {
+                const limitMsg = payload.daily_limit ? ` (Daily limit: ${payload.daily_limit}/24h)` : ' (No daily limit)';
+                showAlert('Saved' + limitMsg);
+                closeServiceModal();
+                loadData();
+            } else {
+                const err = await res.json().catch(() => ({}));
+                showAlert('Save failed: ' + (err.error || res.statusText), 'error');
+            }
         };
         async function deleteService(id) { if(confirm('Delete?')) { await fetch(`/hub/api/admin/services/${id}`, {method:'DELETE'}); loadData(); } }
         function openAssignModal(userId) {
