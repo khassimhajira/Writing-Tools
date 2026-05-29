@@ -94,11 +94,28 @@
             margin-top: 4px; font-size: 0.72rem; color: #475569;
         }
         #portal-usage .pu-reset b { color: #0f172a; font-weight: 700; }
-        /* Note: we intentionally keep the pill light in BOTH dashboard themes,
-           because the visible context behind it is the StealthWriter (or other
-           service) interior — which is white. Matching that, not the dashboard
-           chrome (which is hidden when the iframe is open), gives a seamless
-           look. */
+
+        /* Dark variant — applied when the loaded service (e.g. StealthWriter)
+           is in dark mode. Detected by sampling the iframe documentElement. */
+        #portal-usage.is-dark {
+            background: #1f2937;
+            color: #f1f5f9;
+            border-color: rgba(255,255,255,0.08);
+            box-shadow:
+                0 1px 2px rgba(0,0,0,0.30),
+                0 12px 32px rgba(0,0,0,0.45);
+        }
+        #portal-usage.is-dark .pu-label { color: #94a3b8; }
+        #portal-usage.is-dark.is-warn .pu-label { color: #fbbf24; }
+        #portal-usage.is-dark.is-crit .pu-label { color: #fca5a5; }
+        #portal-usage.is-dark .pu-num { color: #ffffff; }
+        #portal-usage.is-dark .pu-num small { color: #64748b; }
+        #portal-usage.is-dark.is-crit .pu-num { color: #fca5a5; }
+        #portal-usage.is-dark .pu-bar { background: rgba(255,255,255,0.08); }
+        #portal-usage.is-dark .pu-foot { color: #94a3b8; }
+        #portal-usage.is-dark .pu-foot .pu-svc { color: #64748b; }
+        #portal-usage.is-dark .pu-reset { color: #cbd5e1; }
+        #portal-usage.is-dark .pu-reset b { color: #ffffff; }
 
         @media (max-width: 600px) {
             #portal-usage {
@@ -391,14 +408,120 @@
             _puFetch();
             if (_puPoll) clearInterval(_puPoll);
             _puPoll = setInterval(_puFetch, 8000);
+            startThemeWatcher();
         }
         function stopPortalUsage() {
             _puSlug = null;
             _puData = null;
             if (_puPoll) { clearInterval(_puPoll); _puPoll = null; }
             if (_puTick) { clearInterval(_puTick); _puTick = null; }
+            stopThemeWatcher();
             const el = document.getElementById('portal-usage');
-            if (el) el.style.display = 'none';
+            if (el) {
+                el.style.display = 'none';
+                el.classList.remove('is-dark');
+            }
+        }
+
+        // ---- Theme sync ----
+        // Detect whether the loaded service iframe is in dark mode and
+        // mirror that on the floating pill. Polls every 800ms and also
+        // watches the iframe's <html> attributes when same-origin allows.
+        let _puThemePoll = null;
+        let _puThemeObserver = null;
+        function detectIframeIsDark() {
+            const frame = document.getElementById('portal-frame');
+            if (!frame) return false;
+            // Same-origin: read directly. Cross-origin: fall back to
+            // a heuristic on the iframe's computed background color.
+            try {
+                const doc = frame.contentDocument;
+                if (doc && doc.documentElement) {
+                    const html = doc.documentElement;
+                    const body = doc.body;
+                    // Common patterns: tailwind's "dark" class, data-theme, or
+                    // a `color-scheme: dark` style.
+                    if (html.classList && html.classList.contains('dark')) return true;
+                    if (body && body.classList && body.classList.contains('dark')) return true;
+                    const dt = (html.getAttribute('data-theme') || body && body.getAttribute('data-theme') || '').toLowerCase();
+                    if (dt === 'dark' || dt === 'night') return true;
+                    if (dt === 'light') return false;
+                    // Last resort: read computed background.
+                    if (body) {
+                        const bg = doc.defaultView.getComputedStyle(body).backgroundColor || '';
+                        const m = bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+                        if (m) {
+                            const lum = (parseInt(m[1]) * 0.299 + parseInt(m[2]) * 0.587 + parseInt(m[3]) * 0.114);
+                            return lum < 90; // dark if perceived luminance is low
+                        }
+                    }
+                }
+            } catch (e) {
+                // Cross-origin: we can't reach the doc. Assume light.
+            }
+            return false;
+        }
+        function applyIframeTheme() {
+            const el = document.getElementById('portal-usage');
+            if (!el) return;
+            const dark = detectIframeIsDark();
+            el.classList.toggle('is-dark', dark);
+        }
+        function startThemeWatcher() {
+            stopThemeWatcher();
+            // Poll-based watcher works for both same-origin and cross-origin.
+            _puThemePoll = setInterval(applyIframeTheme, 800);
+            applyIframeTheme();
+
+            // For same-origin services (StealthWriter on our proxy), also
+            // attach a MutationObserver to react instantly to a class flip.
+            const frame = document.getElementById('portal-frame');
+            try {
+                if (frame && frame.contentDocument && frame.contentDocument.documentElement) {
+                    _puThemeObserver = new MutationObserver(applyIframeTheme);
+                    _puThemeObserver.observe(frame.contentDocument.documentElement, {
+                        attributes: true, attributeFilter: ['class', 'data-theme', 'style']
+                    });
+                    if (frame.contentDocument.body) {
+                        _puThemeObserver.observe(frame.contentDocument.body, {
+                            attributes: true, attributeFilter: ['class', 'data-theme', 'style']
+                        });
+                    }
+                }
+            } catch (_) { /* cross-origin: fall back to the poll */ }
+
+            // Re-attach the observer once the iframe finishes loading,
+            // since the contentDocument we attached to may have been
+            // replaced during navigation.
+            if (frame) {
+                frame.addEventListener('load', () => {
+                    applyIframeTheme();
+                    if (_puThemeObserver) {
+                        try { _puThemeObserver.disconnect(); } catch(_) {}
+                        _puThemeObserver = null;
+                    }
+                    try {
+                        if (frame.contentDocument && frame.contentDocument.documentElement) {
+                            _puThemeObserver = new MutationObserver(applyIframeTheme);
+                            _puThemeObserver.observe(frame.contentDocument.documentElement, {
+                                attributes: true, attributeFilter: ['class', 'data-theme', 'style']
+                            });
+                            if (frame.contentDocument.body) {
+                                _puThemeObserver.observe(frame.contentDocument.body, {
+                                    attributes: true, attributeFilter: ['class', 'data-theme', 'style']
+                                });
+                            }
+                        }
+                    } catch(_) {}
+                }, { once: true });
+            }
+        }
+        function stopThemeWatcher() {
+            if (_puThemePoll) { clearInterval(_puThemePoll); _puThemePoll = null; }
+            if (_puThemeObserver) {
+                try { _puThemeObserver.disconnect(); } catch(_) {}
+                _puThemeObserver = null;
+            }
         }
         // The iframe forwards 429s and successful POST/PUTs as postMessage so
         // the pill updates without waiting for the next 8s poll.
