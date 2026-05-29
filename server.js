@@ -21,7 +21,7 @@ const { HttpsProxyAgent } = require('https-proxy-agent');
 const axios = require('axios');
 
 // MVC Modules
-const { get, run, query, db, pickLeastLoadedCookie } = require('./database');
+const { get, run, query, db, pickLeastLoadedCookie, countRecentUsage, recordUsage, USAGE_WINDOW_MS } = require('./database');
 const { router: authRouter, JWT_SECRET } = require('./routes/auth');
 const adminRouter = require('./routes/admin');
 
@@ -214,6 +214,13 @@ function getProxyAgent(userId) {
 // Active Proxy Sessions
 const activeProxyUsers = new Map(); // userId -> lastActivityTimestamp
 
+// Debounce map for usage counting. A single user click on a SPA can fire
+// multiple back-to-back POSTs (real action + analytics). We collapse anything
+// inside DEBOUNCE_MS into a single "use".
+//   key: `${userId}:${serviceId}`  ->  last counted timestamp
+const lastCountedUsage = new Map();
+const USAGE_DEBOUNCE_MS = 5000;
+
 const proxy = httpProxy.createProxyServer({
     changeOrigin: true,
     ws: true
@@ -398,6 +405,52 @@ app.use(async (req, res, next) => {
 
         if (!assignment.cookie_id || !assignment.cookie_data) {
             return res.status(403).send('<div style="color:black;text-align:center;margin-top:20%;font-size:2rem;font-family:sans-serif;">No premium slot assigned for this tool.</div>');
+        }
+
+        // --- DAILY USAGE LIMIT ---
+        // Only POST/PUT requests count as a "use" — GETs for the page itself,
+        // assets, and idle telemetry are free. NULL or 0 daily_limit = no cap.
+        const dailyLimit = service.daily_limit ? parseInt(service.daily_limit, 10) : 0;
+        const isWriteRequest = req.method === 'POST' || req.method === 'PUT';
+        if (dailyLimit > 0 && isWriteRequest) {
+            try {
+                const { count, oldest } = await countRecentUsage(verified.id, service.id);
+                if (count >= dailyLimit) {
+                    const resetAt = (oldest || Date.now()) + USAGE_WINDOW_MS;
+                    const minsLeft = Math.max(1, Math.ceil((resetAt - Date.now()) / 60000));
+                    const hrsLeft = (minsLeft / 60).toFixed(1);
+                    res.status(429);
+                    res.setHeader('Retry-After', Math.ceil((resetAt - Date.now()) / 1000));
+                    return res.send(`
+                        <div style="font-family:sans-serif;color:#0f172a;text-align:center;padding:60px 20px;max-width:560px;margin:8% auto;background:#fff;border-radius:12px;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+                            <div style="font-size:48px;margin-bottom:8px;">⏳</div>
+                            <h2 style="margin:0 0 12px;color:#dc2626;">Daily limit reached</h2>
+                            <p style="margin:0 0 8px;font-size:1.1rem;">You've used <b>${service.name}</b> ${count} times in the last 24 hours.</p>
+                            <p style="margin:0 0 20px;color:#475569;">Your daily allowance is <b>${dailyLimit}</b>. Try again in about <b>${hrsLeft} hours</b> (${minsLeft} min).</p>
+                            <p style="font-size:0.85rem;color:#64748b;">Need more? Contact your administrator.</p>
+                        </div>
+                    `);
+                }
+                // Below the limit. Record this hit, but only if we haven't
+                // counted one for this user+service inside the debounce window.
+                const key = `${verified.id}:${service.id}`;
+                const lastT = lastCountedUsage.get(key) || 0;
+                if (Date.now() - lastT >= USAGE_DEBOUNCE_MS) {
+                    lastCountedUsage.set(key, Date.now());
+                    // Best-effort, don't block the proxy if this insert fails.
+                    recordUsage(verified.id, service.id).catch(e => {
+                        console.error('[Usage] record failed:', e.message);
+                    });
+                    // Notify admins for the live usage view.
+                    io.to('admins').emit('usage_recorded', {
+                        user_id: verified.id, service_id: service.id, ts: Date.now()
+                    });
+                }
+            } catch (e) {
+                // If the counter itself errored, do NOT block the user. Better
+                // to skip enforcement than break the service entirely.
+                console.error('[Usage] limit check failed:', e.message);
+            }
         }
 
         // Track Activity

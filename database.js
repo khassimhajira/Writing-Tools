@@ -151,6 +151,22 @@ function initializeDB() {
         db.run(`ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'`, (err) => {});
         db.run(`ALTER TABLE cookies ADD COLUMN service_id INTEGER`, (err) => {});
         db.run(`ALTER TABLE services ADD COLUMN amember_product_id TEXT`, (err) => {});
+        // Per-service daily usage cap. NULL or 0 = no limit. Existing services
+        // get NULL by default, so behavior is unchanged unless an admin sets it.
+        db.run(`ALTER TABLE services ADD COLUMN daily_limit INTEGER`, (err) => {});
+
+        // Service usage log: one row per "billable" proxy action (POST/PUT)
+        // per user per service, used to enforce the rolling 24h limit.
+        db.run(`CREATE TABLE IF NOT EXISTS service_usage (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            service_id INTEGER NOT NULL,
+            used_at INTEGER NOT NULL,  -- epoch ms, for fast range scans
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY(service_id) REFERENCES services(id) ON DELETE CASCADE
+        )`);
+        db.run(`CREATE INDEX IF NOT EXISTS idx_usage_user_svc_time
+                ON service_usage(user_id, service_id, used_at)`);
 
         // Data Migration / Initialization
         runMigrations();
@@ -361,4 +377,43 @@ const pickLeastLoadedCookie = (serviceId) => {
     });
 };
 
-module.exports = { db, query, run, get, pickLeastLoadedCookie };
+// Window for the rolling daily cap, in milliseconds.
+const USAGE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Counts how many usage rows exist for (user, service) in the last 24h.
+ * Returns the count plus the timestamp of the oldest row in the window
+ * (so callers can tell the user when the next slot frees up).
+ */
+const countRecentUsage = (userId, serviceId) => {
+    return new Promise((resolve, reject) => {
+        const since = Date.now() - USAGE_WINDOW_MS;
+        const sql = `
+            SELECT COUNT(*) AS cnt, MIN(used_at) AS oldest
+            FROM service_usage
+            WHERE user_id = ? AND service_id = ? AND used_at >= ?
+        `;
+        db.get(sql, [userId, serviceId, since], (err, row) => {
+            if (err) reject(err);
+            else resolve({ count: (row && row.cnt) || 0, oldest: (row && row.oldest) || null });
+        });
+    });
+};
+
+/**
+ * Records a usage event. Fire-and-forget callers are fine — errors are logged.
+ */
+const recordUsage = (userId, serviceId) => {
+    return new Promise((resolve, reject) => {
+        db.run(
+            'INSERT INTO service_usage (user_id, service_id, used_at) VALUES (?, ?, ?)',
+            [userId, serviceId, Date.now()],
+            (err) => {
+                if (err) reject(err);
+                else resolve();
+            }
+        );
+    });
+};
+
+module.exports = { db, query, run, get, pickLeastLoadedCookie, countRecentUsage, recordUsage, USAGE_WINDOW_MS };

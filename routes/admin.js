@@ -34,24 +34,26 @@ router.get('/services', async (req, res) => {
 
 // Add new service
 router.post('/services', async (req, res) => {
-    const { name, target_url, icon_svg, text_svg, injection_js, amember_product_id } = req.body;
+    const { name, target_url, icon_svg, text_svg, injection_js, amember_product_id, daily_limit } = req.body;
     const slug = (req.body.slug || '').trim();
+    const dl = (daily_limit === '' || daily_limit == null) ? null : parseInt(daily_limit, 10);
     try {
-        await run(`INSERT INTO services (name, slug, target_url, icon_svg, text_svg, injection_js, amember_product_id) 
-                   VALUES (?, ?, ?, ?, ?, ?, ?)`, 
-                   [name, slug, target_url, icon_svg, text_svg, injection_js, amember_product_id || null]);
+        await run(`INSERT INTO services (name, slug, target_url, icon_svg, text_svg, injection_js, amember_product_id, daily_limit) 
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, 
+                   [name, slug, target_url, icon_svg, text_svg, injection_js, amember_product_id || null, Number.isFinite(dl) && dl > 0 ? dl : null]);
         res.status(201).json({ message: 'Service added' });
     } catch(e) { res.status(500).json({ error: 'Database error: ' + e.message }); }
 });
 
 // Update service
 router.put('/services/:id', async (req, res) => {
-    const { name, target_url, icon_svg, text_svg, injection_js, amember_product_id } = req.body;
+    const { name, target_url, icon_svg, text_svg, injection_js, amember_product_id, daily_limit } = req.body;
     const slug = (req.body.slug || '').trim();
+    const dl = (daily_limit === '' || daily_limit == null) ? null : parseInt(daily_limit, 10);
     try {
-        await run(`UPDATE services SET name = ?, slug = ?, target_url = ?, icon_svg = ?, text_svg = ?, injection_js = ?, amember_product_id = ? 
+        await run(`UPDATE services SET name = ?, slug = ?, target_url = ?, icon_svg = ?, text_svg = ?, injection_js = ?, amember_product_id = ?, daily_limit = ? 
                    WHERE id = ?`, 
-                   [name, slug, target_url, icon_svg, text_svg, injection_js, amember_product_id, req.params.id]);
+                   [name, slug, target_url, icon_svg, text_svg, injection_js, amember_product_id, Number.isFinite(dl) && dl > 0 ? dl : null, req.params.id]);
         res.json({ message: 'Service updated' });
     } catch(e) { res.status(500).json({ error: 'Database error: ' + e.message }); }
 });
@@ -615,6 +617,69 @@ router.delete('/proxies/:id', async (req, res) => {
         res.json({ message: 'Proxy deleted' });
     } catch(e) { res.status(500).json({ error: 'Database error' }); }
 });
+
+
+// --- USAGE LIMITS ---
+
+// Per-service usage view: every user who used this service in the last 24h
+// with their count and the configured cap. Drives the admin UI.
+router.get('/services/:id/usage', async (req, res) => {
+    try {
+        const service = await get('SELECT id, name, daily_limit FROM services WHERE id = ?', [req.params.id]);
+        if (!service) return res.status(404).json({ error: 'Service not found' });
+
+        const since = Date.now() - 24 * 60 * 60 * 1000;
+        const rows = await query(`
+            SELECT u.id AS user_id, u.username, u.email,
+                   COUNT(g.id) AS used,
+                   MIN(g.used_at) AS oldest_use,
+                   MAX(g.used_at) AS latest_use
+            FROM users u
+            JOIN service_usage g ON g.user_id = u.id
+            WHERE g.service_id = ? AND g.used_at >= ?
+            GROUP BY u.id
+            ORDER BY used DESC, latest_use DESC
+        `, [req.params.id, since]);
+
+        res.json({
+            service: { id: service.id, name: service.name, daily_limit: service.daily_limit || null },
+            window_hours: 24,
+            now: Date.now(),
+            users: rows
+        });
+    } catch(e) {
+        console.error('Usage view error:', e);
+        res.status(500).json({ error: 'Database error' });
+    }
+});
+
+// Reset a single user's usage on a service (admin override).
+router.delete('/services/:id/usage/:user_id', async (req, res) => {
+    try {
+        const result = await run(
+            'DELETE FROM service_usage WHERE service_id = ? AND user_id = ?',
+            [req.params.id, req.params.user_id]
+        );
+        const io = req.app.get('io');
+        if (io) io.emit('usage_reset', { service_id: parseInt(req.params.id, 10), user_id: parseInt(req.params.user_id, 10) });
+        res.json({ message: 'Usage reset', removed: result.changes });
+    } catch(e) {
+        res.status(500).json({ error: 'Database error' });
+    }
+});
+
+// Clear all usage rows for a service (full reset).
+router.delete('/services/:id/usage', async (req, res) => {
+    try {
+        const result = await run('DELETE FROM service_usage WHERE service_id = ?', [req.params.id]);
+        const io = req.app.get('io');
+        if (io) io.emit('usage_reset', { service_id: parseInt(req.params.id, 10) });
+        res.json({ message: 'All usage cleared for this service', removed: result.changes });
+    } catch(e) {
+        res.status(500).json({ error: 'Database error' });
+    }
+});
+
 
 module.exports = router;
 
