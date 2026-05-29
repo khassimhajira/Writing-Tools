@@ -18,18 +18,43 @@ function resolveDbPath() {
         return { path: process.env.DATABASE_PATH.trim(), source: 'DATABASE_PATH env' };
     }
 
-    const home = process.env.HOME || process.env.USERPROFILE;
-    if (home) {
-        const persistentDir = path.join(home, 'stealth_data');
-        const persistentFile = path.join(persistentDir, 'stealth.db');
-        // Use this location if either the directory or the DB file already
-        // exists. Don't auto-create it here — that's the user's call. We don't
-        // want a fresh dev clone to silently grow a DB outside the repo.
+    // Build a list of candidate "home" roots to probe. Hostinger's Passenger
+    // runtime does not always set process.env.HOME, so we also walk up from
+    // __dirname (typical layout: /home/<user>/domains/<domain>/nodejs) and
+    // ask the OS for the user's home dir.
+    const candidateHomes = [];
+    const pushIfReal = (p) => { if (p && typeof p === 'string') candidateHomes.push(p); };
+
+    pushIfReal(process.env.HOME);
+    pushIfReal(process.env.USERPROFILE);
+    try { pushIfReal(require('os').homedir()); } catch (_) {}
+
+    // Walk up from __dirname looking for a folder that has a "domains/" sibling
+    // (typical Hostinger layout) — that folder is the user's home.
+    let walker = __dirname;
+    for (let i = 0; i < 6; i++) {
+        const parent = path.dirname(walker);
+        if (!parent || parent === walker) break;
+        walker = parent;
         try {
-            if (fs.existsSync(persistentFile) || fs.existsSync(persistentDir)) {
-                return { path: persistentFile, source: 'auto-detected persistent dir' };
+            if (fs.existsSync(path.join(walker, 'domains'))) {
+                pushIfReal(walker);
+                break;
             }
-        } catch (_) { /* ignore */ }
+        } catch (_) {}
+    }
+
+    const seen = new Set();
+    for (const h of candidateHomes) {
+        if (!h || seen.has(h)) continue;
+        seen.add(h);
+        try {
+            const dir = path.join(h, 'stealth_data');
+            const file = path.join(dir, 'stealth.db');
+            if (fs.existsSync(file) || fs.existsSync(dir)) {
+                return { path: file, source: `auto-detected persistent dir (${h})` };
+            }
+        } catch (_) {}
     }
 
     return { path: path.join(__dirname, 'stealth.db'), source: 'local fallback (NOT persistent on Hostinger)' };
