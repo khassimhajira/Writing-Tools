@@ -1073,32 +1073,71 @@ proxy.on('proxyRes', (proxyRes, req, res) => {
                 // sleek glass-morph toast over the page so the user gets a
                 // clean, branded message instead of the host site's cryptic
                 // "Failed to connect" type errors.
+                let _hubToastInterval = null;
+                function fmtCountdown(ms) {
+                    if (ms <= 0) return 'resetting…';
+                    const totalSec = Math.floor(ms / 1000);
+                    const h = Math.floor(totalSec / 3600);
+                    const m = Math.floor((totalSec % 3600) / 60);
+                    const s = totalSec % 60;
+                    const pad = (n) => n < 10 ? '0' + n : '' + n;
+                    if (h > 0) return h + 'h ' + pad(m) + 'm ' + pad(s) + 's';
+                    if (m > 0) return m + 'm ' + pad(s) + 's';
+                    return s + 's';
+                }
                 function showLimitToast(detail) {
                     try {
                         const existing = document.getElementById('hub-limit-toast');
                         if (existing) existing.remove();
+                        if (_hubToastInterval) { clearInterval(_hubToastInterval); _hubToastInterval = null; }
+
                         const wrap = document.createElement('div');
                         wrap.id = 'hub-limit-toast';
-                        wrap.style.cssText = 'position:fixed;top:24px;left:50%;transform:translateX(-50%);z-index:2147483647;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;';
-                        const hours = detail && detail.reset_in_hours != null ? detail.reset_in_hours : null;
+                        wrap.style.cssText = 'position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:2147483647;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;width:calc(100% - 24px);max-width:480px;box-sizing:border-box;';
                         const used = detail && detail.used != null ? detail.used : '';
                         const cap = detail && detail.daily_limit != null ? detail.daily_limit : '';
-                        const resetTxt = (hours != null) ? ('about ' + hours + ' hours') : 'tomorrow';
-                        wrap.innerHTML = '<div style="min-width:340px;max-width:480px;padding:16px 20px;border-radius:14px;backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);background:rgba(15,23,42,0.85);color:#fff;box-shadow:0 18px 48px rgba(0,0,0,0.45),inset 0 1px 0 rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.12);display:flex;gap:14px;align-items:flex-start;animation:hub-toast-in 0.35s cubic-bezier(.2,.9,.2,1);">' +
-                            '<div style="font-size:24px;line-height:1;">⏳</div>' +
-                            '<div style="flex:1;">' +
-                                '<div style="font-weight:700;font-size:0.95rem;margin-bottom:4px;">Daily limit reached</div>' +
-                                '<div style="font-size:0.82rem;color:#cbd5e1;line-height:1.4;">You have used ' + used + ' / ' + cap + ' of your daily allowance. Access resets in ' + resetTxt + '. Contact your admin if you need more.</div>' +
+                        const resetAt = detail && detail.reset_at ? detail.reset_at : null;
+
+                        wrap.innerHTML = '<div style="padding:14px 16px;border-radius:14px;backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);background:rgba(15,23,42,0.85);color:#fff;box-shadow:0 18px 48px rgba(0,0,0,0.45),inset 0 1px 0 rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.12);display:flex;gap:12px;align-items:flex-start;animation:hub-toast-in 0.35s cubic-bezier(.2,.9,.2,1);">' +
+                            '<div style="font-size:22px;line-height:1;">⏳</div>' +
+                            '<div style="flex:1;min-width:0;">' +
+                                '<div style="font-weight:700;font-size:0.92rem;margin-bottom:4px;">Daily limit reached</div>' +
+                                '<div style="font-size:0.78rem;color:#cbd5e1;line-height:1.45;">You have used <b>' + used + ' / ' + cap + '</b> of your daily allowance.</div>' +
+                                (resetAt ? '<div style="margin-top:6px;font-size:0.78rem;color:#fef3c7;font-variant-numeric:tabular-nums;">Resets in <span id="hub-toast-countdown">…</span></div>' : '') +
                             '</div>' +
                             '<button id="hub-limit-toast-close" style="background:transparent;border:none;color:rgba(255,255,255,0.6);cursor:pointer;font-size:18px;padding:0 4px;line-height:1;">×</button>' +
                         '</div>';
+
                         const style = document.createElement('style');
-                        style.textContent = '@keyframes hub-toast-in{from{opacity:0;transform:translate(-50%,-12px);}to{opacity:1;transform:translate(-50%,0);}}';
+                        style.textContent = '@keyframes hub-toast-in{from{opacity:0;transform:translate(-50%,-12px);}to{opacity:1;transform:translate(-50%,0);}}@media(max-width:480px){#hub-limit-toast{top:8px !important;}}';
                         document.head.appendChild(style);
                         document.body.appendChild(wrap);
-                        document.getElementById('hub-limit-toast-close').onclick = () => wrap.remove();
-                        // Auto-dismiss after 12s.
-                        setTimeout(() => { if (wrap.parentNode) wrap.remove(); }, 12000);
+                        document.getElementById('hub-limit-toast-close').onclick = () => {
+                            wrap.remove();
+                            if (_hubToastInterval) { clearInterval(_hubToastInterval); _hubToastInterval = null; }
+                        };
+
+                        if (resetAt) {
+                            const cd = document.getElementById('hub-toast-countdown');
+                            const tick = () => {
+                                const ms = resetAt - Date.now();
+                                if (ms <= 0) {
+                                    if (cd) cd.textContent = 'resetting…';
+                                    if (_hubToastInterval) { clearInterval(_hubToastInterval); _hubToastInterval = null; }
+                                    // Soft-fade the toast after reset.
+                                    setTimeout(() => { if (wrap.parentNode) wrap.remove(); }, 4000);
+                                    return;
+                                }
+                                if (cd) cd.textContent = fmtCountdown(ms);
+                            };
+                            tick();
+                            _hubToastInterval = setInterval(tick, 1000);
+                        }
+                        // No auto-dismiss when resetAt is shown — user can close manually.
+                        // If no resetAt we still auto-dismiss after 12s.
+                        if (!resetAt) {
+                            setTimeout(() => { if (wrap.parentNode) wrap.remove(); }, 12000);
+                        }
                     } catch(e) { console.warn('[Hub] toast failed:', e); }
                 }
 

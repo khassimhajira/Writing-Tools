@@ -170,9 +170,10 @@ router.get('/services', async (req, res) => {
             );
             svc.used_today = (usageRow && usageRow.used) || 0;
             if (svc.daily_limit && usageRow && usageRow.oldest) {
-                const resetAt = usageRow.oldest + 24 * 60 * 60 * 1000;
-                svc.reset_in_minutes = Math.max(0, Math.ceil((resetAt - Date.now()) / 60000));
+                svc.reset_at = usageRow.oldest + 24 * 60 * 60 * 1000; // absolute epoch ms
+                svc.reset_in_minutes = Math.max(0, Math.ceil((svc.reset_at - Date.now()) / 60000));
             } else {
+                svc.reset_at = null;
                 svc.reset_in_minutes = null;
             }
         }

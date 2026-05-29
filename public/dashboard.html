@@ -15,6 +15,19 @@
             box-shadow: 0 10px 20px rgba(99, 102, 241, 0.2);
             margin-bottom: 1rem;
         }
+        .service-usage-badge {
+            font-variant-numeric: tabular-nums;
+            transition: background 0.25s ease, border-color 0.25s ease;
+        }
+        @media (max-width: 600px) {
+            .service-usage-badge {
+                top: 6px !important;
+                right: 6px !important;
+                padding: 4px 8px !important;
+                font-size: 0.58rem !important;
+                border-radius: 12px !important;
+            }
+        }
     </style>
 </head>
 <body>
@@ -67,6 +80,51 @@
             return `<div class="auto-icon">${letters}</div>`;
         }
 
+        // Live countdown ticker. Walks every element with .hub-countdown +
+        // data-reset-at and rewrites its text every second. Single setInterval
+        // for the whole page so it scales fine.
+        let _countdownInterval = null;
+        function formatCountdown(msLeft) {
+            if (msLeft <= 0) return 'resetting…';
+            const totalSec = Math.floor(msLeft / 1000);
+            const h = Math.floor(totalSec / 3600);
+            const m = Math.floor((totalSec % 3600) / 60);
+            const s = totalSec % 60;
+            const pad = (n) => n < 10 ? '0' + n : '' + n;
+            if (h > 0) return 'resets in ' + h + 'h ' + pad(m) + 'm ' + pad(s) + 's';
+            if (m > 0) return 'resets in ' + m + 'm ' + pad(s) + 's';
+            return 'resets in ' + s + 's';
+        }
+        function tickCountdowns() {
+            const nodes = document.querySelectorAll('.hub-countdown');
+            if (nodes.length === 0) return;
+            let anyExpired = false;
+            const now = Date.now();
+            nodes.forEach((el) => {
+                const resetAt = parseInt(el.getAttribute('data-reset-at'), 10);
+                if (!resetAt) return;
+                const diff = resetAt - now;
+                if (diff <= 0) {
+                    el.textContent = 'resetting…';
+                    anyExpired = true;
+                } else {
+                    el.textContent = formatCountdown(diff);
+                }
+            });
+            // If any countdown expired, refresh from server so the badge can
+            // turn green again.
+            if (anyExpired) {
+                clearInterval(_countdownInterval);
+                _countdownInterval = null;
+                setTimeout(() => init(), 1500);
+            }
+        }
+        function startCountdownTicker() {
+            if (_countdownInterval) clearInterval(_countdownInterval);
+            tickCountdowns();
+            _countdownInterval = setInterval(tickCountdowns, 1000);
+        }
+
         async function init() {
             try {
                 const userRes = await fetch('/hub/api/auth/me');
@@ -97,22 +155,23 @@
                                 warn: { ring: 'rgba(245,158,11,0.7)',   text: '#fde68a' },
                                 crit: { ring: 'rgba(248,113,113,0.75)', text: '#fecaca' }
                             }[tone];
-                            const resetTxt = (s.reset_in_minutes != null && remaining <= 0)
-                                ? ('resets in ' + (s.reset_in_minutes < 60 ? (s.reset_in_minutes + ' min') : (Math.ceil(s.reset_in_minutes / 60) + 'h')))
-                                : 'today';
+                            const resetAttr = s.reset_at ? ('data-reset-at="' + s.reset_at + '"') : '';
                             const labelTxt = remaining > 0
-                                ? (remaining + ' / ' + limit + ' left ' + resetTxt)
-                                : ('Limit reached, ' + resetTxt);
+                                ? (remaining + ' / ' + limit + ' left today')
+                                : 'Limit reached';
+                            const subTxt = (remaining <= 0 && s.reset_at)
+                                ? '<span class="hub-countdown" ' + resetAttr + '></span>'
+                                : '';
                             badgeHTML = '<div class="service-usage-badge" style="' +
                                 'position:absolute;top:8px;right:8px;z-index:5;' +
-                                'padding:5px 10px;border-radius:999px;font-size:0.65rem;font-weight:600;letter-spacing:0.02em;' +
+                                'padding:5px 10px;border-radius:14px;font-size:0.62rem;font-weight:600;letter-spacing:0.02em;' +
                                 'color:' + colors.text + ';' +
                                 'backdrop-filter:blur(14px) saturate(180%);-webkit-backdrop-filter:blur(14px) saturate(180%);' +
                                 'background:rgba(15,23,42,0.55);' +
                                 'border:1px solid ' + colors.ring + ';' +
                                 'box-shadow:0 4px 14px rgba(0,0,0,0.25),inset 0 1px 0 rgba(255,255,255,0.1);' +
-                                'pointer-events:none;white-space:nowrap;' +
-                            '">' + labelTxt + '</div>';
+                                'pointer-events:none;text-align:center;line-height:1.3;max-width:90%;' +
+                            '">' + labelTxt + (subTxt ? '<br><span style="font-weight:500;font-size:0.92em;opacity:0.92;">' + subTxt + '</span>' : '') + '</div>';
                         }
                         return `
                         <div class="service-wrapper" style="position:relative;">
@@ -133,6 +192,7 @@
                         </div>
                         `;
                     }).join('');
+                    startCountdownTicker();
 
 
                 } else {
