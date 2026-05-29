@@ -2,7 +2,9 @@
 <html lang="en" data-theme="dark">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)">
+    <meta name="theme-color" content="#f8fafc" media="(prefers-color-scheme: light)">
     <title>StealthWriter Hub | Portal</title>
     <link rel="stylesheet" href="style.css">
     <link rel="icon" href="FAVICON.png">
@@ -127,6 +129,17 @@
                 border-radius: 13px;
             }
             #portal-usage .pu-num { font-size: 0.95rem; }
+        }
+        /* On the smallest phones, stack the usage pill ABOVE the back button
+           by anchoring it higher so they don't fight for the bottom row. */
+        @media (max-width: 480px) {
+            #portal-usage {
+                bottom: 78px !important;
+                right: 14px !important;
+                left: 14px !important;
+                width: auto !important;
+                max-width: none !important;
+            }
         }
     </style>
 </head>

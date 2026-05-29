@@ -867,8 +867,7 @@ body.portal-open main.container {
     #no-access-view div:first-child {
         font-size: 2.5rem !important;
         margin-bottom: 1.5rem !important;
-    }
-    #no-access-view h2 {
+    }    #no-access-view h2 {
         font-size: 1.5rem !important;
         margin-bottom: 0.8rem !important;
     }
@@ -876,6 +875,97 @@ body.portal-open main.container {
         font-size: 0.95rem !important;
         line-height: 1.5;
         margin: 0 auto !important;
+    }
+}
+
+/* ============================================================
+   MOBILE POLISH — wrapper layout adapts to phone screens.
+   The service iframes (StealthWriter / ChatGPT / etc.) handle
+   their own internal mobile layout. We only ensure our wrapper
+   (dashboard tiles, portal mode, back button, usage pill) does
+   not crowd or overlap the iframe content.
+   ============================================================ */
+
+/* Use 100dvh where supported so mobile browser address-bar collapse
+   doesn't leave a gap at the bottom. Falls back to 100vh on browsers
+   that don't support dvh. */
+@supports (height: 100dvh) {
+    #portal-frame { height: 100dvh; }
+    #tool-frame   { height: 100dvh; }
+}
+
+/* Touch-friendly tap targets — Apple's HIG recommends 44px minimum. */
+@media (hover: none) and (pointer: coarse) {
+    .nav-link, .theme-toggle, #logout-btn, #portal-exit {
+        min-height: 44px;
+    }
+    button, .service-logo-card, [role="button"] {
+        -webkit-tap-highlight-color: transparent;
+    }
+}
+
+@media (max-width: 600px) {
+    /* Single-column service grid on phones — better readability,
+       larger tap targets. */
+    #services-grid {
+        grid-template-columns: 1fr !important;
+        gap: 0.75rem !important;
+    }
+
+    /* Pad the main container slightly less so tiles use more width. */
+    main.container {
+        padding: 1rem !important;
+    }
+
+    /* MY SERVICES heading sized for phones. */
+    #ready-view h2 {
+        font-size: 1.6rem !important;
+    }
+    #ready-view p {
+        font-size: 0.95rem !important;
+    }
+
+    /* Header: tighten spacing, allow wrapping if user pill grows. */
+    #dash-header {
+        padding: 0.75rem 1rem !important;
+        gap: 0.5rem;
+    }
+    .header-actions {
+        gap: 0.5rem;
+    }
+    #user-pill {
+        font-size: 0.78rem !important;
+        padding: 0.25rem 0.6rem !important;
+        max-width: 130px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    /* Back-to-Dashboard pill: smaller, keep clear of the usage pill
+       on the opposite corner. */
+    #portal-exit {
+        bottom: 14px !important;
+        left: 14px !important;
+        padding: 0.55rem 1rem !important;
+        font-size: 0.78rem !important;
+        gap: 6px !important;
+        border-radius: 999px !important;
+    }
+    #portal-exit svg {
+        width: 16px !important;
+        height: 16px !important;
+    }
+}
+
+/* Even smaller phones — nudge font sizes down a touch more. */
+@media (max-width: 380px) {
+    #ready-view h2 { font-size: 1.4rem !important; }
+    #ready-view p  { font-size: 0.85rem !important; }
+    #user-pill     { max-width: 100px; }
+    #portal-exit   {
+        padding: 0.5rem 0.85rem !important;
+        font-size: 0.72rem !important;
     }
 }
 
