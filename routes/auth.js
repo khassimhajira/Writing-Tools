@@ -2,7 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { get, run } = require('../database');
+const { get, run, pickLeastLoadedCookie } = require('../database');
 const { checkAmemberAuth } = require('../amember');
 
 const router = express.Router();
@@ -55,8 +55,8 @@ router.post('/login', async (req, res) => {
                     const existingAssignment = await get('SELECT id, cookie_id FROM user_assignments WHERE user_id = ? AND service_id = ?', [user.id, service.id]);
                     
                     if (!existingAssignment || !existingAssignment.cookie_id) {
-                        // Find an available cookie for this service
-                        const cookie = await get('SELECT id FROM cookies WHERE service_id = ? LIMIT 1', [service.id]);
+                        // Find an available cookie for this service (load-balanced across slots)
+                        const cookie = await pickLeastLoadedCookie(service.id);
                         if (cookie) {
                             await run(`INSERT INTO user_assignments (user_id, service_id, cookie_id) 
                                        VALUES (?, ?, ?) 
@@ -127,7 +127,7 @@ router.get('/services', async (req, res) => {
 
     try {
         const verified = jwt.verify(token, JWT_SECRET);
-        const { query, get, run } = require('../database');
+        const { query, get, run, pickLeastLoadedCookie } = require('../database');
         const { getAmemberUserProducts } = require('../amember');
 
         // --- SILENT SYNC FOR THIS USER ---
@@ -143,7 +143,7 @@ router.get('/services', async (req, res) => {
                 if (hasAccess) {
                     const existing = await get('SELECT id FROM user_assignments WHERE user_id = ? AND service_id = ?', [verified.id, service.id]);
                     if (!existing) {
-                        const cookie = await get('SELECT id FROM cookies WHERE service_id = ? LIMIT 1', [service.id]);
+                        const cookie = await pickLeastLoadedCookie(service.id);
                         await run('INSERT OR IGNORE INTO user_assignments (user_id, service_id, cookie_id) VALUES (?, ?, ?)', [verified.id, service.id, cookie ? cookie.id : null]);
                     }
                 } else {

@@ -1,5 +1,5 @@
 const express = require('express');
-const { get, run, query } = require('../database');
+const { get, run, query, pickLeastLoadedCookie, db } = require('../database');
 const jwt = require('jsonwebtoken');
 const { JWT_SECRET } = require('./auth');
 
@@ -221,8 +221,8 @@ router.post('/sync-amember', async (req, res) => {
                             [hubUser.id, service.id]
                         );
                         if (!existingAssignment) {
-                            // Find first available cookie slot
-                            const cookie = await get('SELECT id FROM cookies WHERE service_id = ? LIMIT 1', [service.id]);
+                            // Find least-loaded cookie slot for this service (load-balanced across slots)
+                            const cookie = await pickLeastLoadedCookie(service.id);
                             await run(
                                 'INSERT OR IGNORE INTO user_assignments (user_id, service_id, cookie_id) VALUES (?, ?, ?)',
                                 [hubUser.id, service.id, cookie ? cookie.id : null]
@@ -381,6 +381,100 @@ router.post('/system/clear-assignments', async (req, res) => {
 });
 
 
+// --- LOAD-BALANCING / REBALANCE ---
+
+// Get a per-slot user-count summary for a service (used by the admin UI to show
+// how loaded each cookie slot is).
+router.get('/services/:id/slot-load', async (req, res) => {
+    try {
+        const rows = await query(`
+            SELECT c.id AS cookie_id, c.name AS cookie_name,
+                   COUNT(a.id) AS user_count
+            FROM cookies c
+            LEFT JOIN user_assignments a ON a.cookie_id = c.id
+            WHERE c.service_id = ?
+            GROUP BY c.id
+            ORDER BY c.id ASC
+        `, [req.params.id]);
+        res.json(rows);
+    } catch(e) {
+        console.error('Slot Load Error:', e);
+        res.status(500).json({ error: 'Database error' });
+    }
+});
+
+// Rebalance: redistribute every user assigned to this service evenly across
+// the service's cookie slots.
+//
+// Safety:
+//   - This only TOUCHES rows in user_assignments for the specified service.
+//     Users on other services, cookies, services rows, and proxies are not
+//     touched.
+//   - If the service has zero cookie slots, nothing changes.
+//   - We use a transaction so a failure mid-way leaves data unchanged.
+router.post('/services/:id/rebalance', async (req, res) => {
+    const serviceId = parseInt(req.params.id, 10);
+    if (!serviceId) return res.status(400).json({ error: 'Invalid service id' });
+
+    try {
+        const service = await get('SELECT id, name FROM services WHERE id = ?', [serviceId]);
+        if (!service) return res.status(404).json({ error: 'Service not found' });
+
+        const slots = await query('SELECT id FROM cookies WHERE service_id = ? ORDER BY id ASC', [serviceId]);
+        if (slots.length === 0) {
+            return res.status(400).json({ error: 'No cookie slots exist for this service. Add at least one slot before rebalancing.' });
+        }
+
+        const assignments = await query(
+            'SELECT id, user_id, cookie_id FROM user_assignments WHERE service_id = ? ORDER BY user_id ASC',
+            [serviceId]
+        );
+
+        if (assignments.length === 0) {
+            return res.json({ message: 'No assignments to rebalance for this service.', moved: 0, slot_count: slots.length, user_count: 0 });
+        }
+
+        // Round-robin: assignment[i] -> slots[i % slots.length]
+        let moved = 0;
+        await new Promise((resolve, reject) => {
+            db.serialize(() => {
+                db.run('BEGIN TRANSACTION', (err) => { if (err) reject(err); });
+                const stmt = db.prepare('UPDATE user_assignments SET cookie_id = ? WHERE id = ?');
+                assignments.forEach((a, i) => {
+                    const target = slots[i % slots.length].id;
+                    if (a.cookie_id !== target) {
+                        stmt.run([target, a.id], (err) => { if (err) console.error('Rebalance row error:', err); });
+                        moved++;
+                    }
+                });
+                stmt.finalize((err) => {
+                    if (err) {
+                        db.run('ROLLBACK', () => reject(err));
+                        return;
+                    }
+                    db.run('COMMIT', (err2) => err2 ? reject(err2) : resolve());
+                });
+            });
+        });
+
+        // Notify clients to refresh — assigned users' currently-injected cookie
+        // may have changed, so they should reload.
+        const io = req.app.get('io');
+        if (io) io.emit('global_reload');
+
+        res.json({
+            message: `Rebalanced ${assignments.length} users across ${slots.length} slot(s). ${moved} reassignments applied.`,
+            user_count: assignments.length,
+            slot_count: slots.length,
+            moved
+        });
+    } catch(e) {
+        console.error('Rebalance Error:', e);
+        res.status(500).json({ error: 'Rebalance failed: ' + e.message });
+    }
+});
+
+
 
 // Quick Grant (Find/Create slot and assign in one click)
 router.post('/users/:id/quick-grant', async (req, res) => {
@@ -390,8 +484,8 @@ router.post('/users/:id/quick-grant', async (req, res) => {
         const service = await get('SELECT name FROM services WHERE id = ?', [service_id]);
         if (!service) return res.status(404).json({ error: 'Service not found' });
 
-        // 2. Find an existing slot for this service
-        let slot = await get('SELECT id FROM cookies WHERE service_id = ? LIMIT 1', [service_id]);
+        // 2. Find an existing slot for this service (least-loaded one)
+        let slot = await pickLeastLoadedCookie(service_id);
         
         // 3. If no slot exists, create a default one
         if (!slot) {

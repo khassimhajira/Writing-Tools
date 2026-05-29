@@ -390,16 +390,25 @@
             // Slot Orchestration
             document.getElementById('slots-master-container').innerHTML = services.map(srv => {
                 const srvSlots = slots.filter(sl => sl.service_id === srv.id);
+                // Per-slot load summary for the heading
+                const loadSummary = srvSlots.map(s => {
+                    const c = users.filter(u => u.assignments.some(a => a.cookie_id === s.id)).length;
+                    return `${s.name}: ${c}`;
+                }).join(' &middot; ') || 'no slots';
                 return `
                     <div class="service-group">
-                        <div class="service-group-title"><h4>${srv.name} Slots</h4></div>
+                        <div class="service-group-title" style="display:flex; align-items:center; gap:1rem; flex-wrap:wrap;">
+                            <h4 style="margin:0;">${srv.name} Slots</h4>
+                            <span style="font-size:0.75rem; color:var(--text-secondary);">${loadSummary}</span>
+                            <button onclick="rebalanceService(${srv.id}, '${srv.name.replace(/'/g, "\\'")}')" style="margin-left:auto; width:auto; padding:4px 10px; font-size:11px; background:var(--brand-blue); color:white; border:none; border-radius:6px; font-weight:700; cursor:pointer;" ${srvSlots.length < 2 ? 'disabled title="Add a second slot before rebalancing." style="margin-left:auto; width:auto; padding:4px 10px; font-size:11px; background:#374151; color:#9ca3af; border:none; border-radius:6px; font-weight:700; cursor:not-allowed; opacity:0.6;"' : ''}>REBALANCE</button>
+                        </div>
                         <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap:1.5rem;">
                             ${srvSlots.map(s => {
                                 const actUsers = users.filter(u => u.assignments.some(a => a.cookie_id === s.id));
                                 return `
                                     <div class="card">
                                         <div style="display:flex; justify-content:space-between; margin-bottom:1rem;">
-                                            <h5 style="color:var(--brand-blue);">${s.name}</h5>
+                                            <h5 style="color:var(--brand-blue);">${s.name} <span style="color:var(--text-secondary); font-weight:normal; font-size:0.7rem;">(${actUsers.length} users)</span></h5>
                                             <button onclick="editSlot(${s.id})" style="width:auto; padding:2px 6px; font-size:10px;">EDIT</button>
                                         </div>
                                         <div style="display:flex; flex-direction:column; gap:0.5rem;">
@@ -566,6 +575,21 @@
             loadData();
         });
         async function clearAllAssignments() { if(confirm('Clear all?')) { await fetch('/hub/api/admin/system/clear-assignments', {method:'POST'}); loadData(); } }
+        async function rebalanceService(sid, sname) {
+            if (!confirm(`Rebalance all users on "${sname}" evenly across its cookie slots?\n\nThis only changes which slot each user is assigned to within "${sname}". Other services, users, cookies and proxies are not touched.`)) return;
+            try {
+                const res = await fetch(`/hub/api/admin/services/${sid}/rebalance`, { method: 'POST' });
+                const data = await res.json();
+                if (res.ok) {
+                    showAlert(data.message);
+                    loadData();
+                } else {
+                    showAlert(data.error || 'Rebalance failed', 'error');
+                }
+            } catch(e) {
+                showAlert('Rebalance failed: ' + e.message, 'error');
+            }
+        }
         document.getElementById('cookie-form').onsubmit = async (e) => { e.preventDefault(); const payload = { service_id: parseInt(document.getElementById('cookie-service-id').value), name: document.getElementById('cookie-name').value, data: document.getElementById('cookie-data').value }; await fetch('/hub/api/admin/cookies', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) }); e.target.reset(); loadData(); };
         function editSlot(id) { const s = slots.find(x => x.id === id); document.getElementById('edit-slot-id').value = s.id; document.getElementById('edit-slot-name').value = s.name; document.getElementById('edit-slot-service-id').value = s.service_id; document.getElementById('edit-slot-data').value = s.data; document.getElementById('slot-modal').style.display='flex'; }
         function closeSlotModal() { document.getElementById('slot-modal').style.display='none'; }

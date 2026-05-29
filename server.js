@@ -21,7 +21,7 @@ const { HttpsProxyAgent } = require('https-proxy-agent');
 const axios = require('axios');
 
 // MVC Modules
-const { get, run, query, db } = require('./database');
+const { get, run, query, db, pickLeastLoadedCookie } = require('./database');
 const { router: authRouter, JWT_SECRET } = require('./routes/auth');
 const adminRouter = require('./routes/admin');
 
@@ -1125,7 +1125,7 @@ async function autoSyncAmember() {
                     if (hasAccessInAmember) {
                         const existingAssignment = await get('SELECT id FROM user_assignments WHERE user_id = ? AND service_id = ?', [hubUser.id, service.id]);
                         if (!existingAssignment) {
-                            const cookie = await get('SELECT id FROM cookies WHERE service_id = ? LIMIT 1', [service.id]);
+                            const cookie = await pickLeastLoadedCookie(service.id);
                             await run('INSERT OR IGNORE INTO user_assignments (user_id, service_id, cookie_id) VALUES (?, ?, ?)', [hubUser.id, service.id, cookie ? cookie.id : null]);
                         }
                     } else {

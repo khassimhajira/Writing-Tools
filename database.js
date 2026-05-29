@@ -330,4 +330,35 @@ const get = (sql, params = []) => {
     });
 };
 
-module.exports = { db, query, run, get };
+/**
+ * Picks the least-loaded cookie slot for a given service.
+ *
+ * "Least-loaded" = the cookie row that is currently referenced by the fewest
+ * user_assignments rows. Ties are broken by cookie id (lower id wins, so the
+ * order is stable and predictable).
+ *
+ * Returns { id } or null if the service has no cookie slots.
+ *
+ * This replaces the old `SELECT id FROM cookies WHERE service_id = ? LIMIT 1`
+ * pattern. Behavior with a single slot is identical to before; with multiple
+ * slots, new users get spread evenly across them.
+ */
+const pickLeastLoadedCookie = (serviceId) => {
+    return new Promise((resolve, reject) => {
+        const sql = `
+            SELECT c.id, COUNT(a.id) AS load
+            FROM cookies c
+            LEFT JOIN user_assignments a ON a.cookie_id = c.id
+            WHERE c.service_id = ?
+            GROUP BY c.id
+            ORDER BY load ASC, c.id ASC
+            LIMIT 1
+        `;
+        db.get(sql, [serviceId], (err, row) => {
+            if (err) reject(err);
+            else resolve(row || null);
+        });
+    });
+};
+
+module.exports = { db, query, run, get, pickLeastLoadedCookie };
