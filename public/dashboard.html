@@ -28,44 +28,55 @@
                 border-radius: 12px !important;
             }
         }
-        /* Floating glass-morph usage pill — mirrors #portal-exit but on the right */
+        /* Floating usage pill — blends with StealthWriter's white-card style.
+           Appears bottom-right when a service with a daily_limit is open. */
         #portal-usage {
             position: fixed;
-            bottom: 40px;
-            right: 40px;
+            bottom: 28px;
+            right: 28px;
             z-index: 10001;
-            min-width: 240px;
+            min-width: 230px;
             max-width: 88vw;
-            padding: 14px 18px;
-            border-radius: 22px;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            color: #fff;
-            backdrop-filter: blur(18px) saturate(180%);
-            -webkit-backdrop-filter: blur(18px) saturate(180%);
-            background: rgba(15, 23, 42, 0.78);
-            border: 1px solid rgba(255, 255, 255, 0.12);
-            box-shadow: 0 14px 36px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255,255,255,0.1);
-            transition: opacity 0.2s ease, transform 0.2s ease;
+            padding: 14px 16px 13px;
+            border-radius: 16px;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+            color: #0f172a;
+            background: #ffffff;
+            border: 1px solid rgba(15, 23, 42, 0.08);
+            box-shadow:
+                0 1px 2px rgba(15, 23, 42, 0.04),
+                0 8px 28px rgba(15, 23, 42, 0.10);
+            transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
             user-select: none;
             font-variant-numeric: tabular-nums;
+        }
+        #portal-usage:hover {
+            box-shadow:
+                0 1px 2px rgba(15, 23, 42, 0.05),
+                0 14px 36px rgba(15, 23, 42, 0.13);
         }
         #portal-usage .pu-row {
             display: flex; align-items: center; justify-content: space-between; gap: 12px;
         }
         #portal-usage .pu-label {
-            font-size: 0.68rem; font-weight: 700; letter-spacing: 0.06em;
+            font-size: 0.6rem; font-weight: 700; letter-spacing: 0.08em;
             text-transform: uppercase;
+            color: #6b7280;
         }
+        #portal-usage.is-warn .pu-label { color: #b45309; }
+        #portal-usage.is-crit .pu-label { color: #b91c1c; }
         #portal-usage .pu-num {
-            font-size: 1rem; font-weight: 800; color: #fff;
+            font-size: 1.05rem; font-weight: 700; color: #0f172a;
+            display: inline-flex; align-items: baseline; gap: 2px;
         }
         #portal-usage .pu-num small {
-            opacity: 0.55; font-weight: 600; font-size: 0.78rem;
+            color: #94a3b8; font-weight: 600; font-size: 0.78rem; margin-left: 2px;
         }
+        #portal-usage.is-crit .pu-num { color: #b91c1c; }
         #portal-usage .pu-bar {
-            height: 6px; border-radius: 99px;
-            background: rgba(255,255,255,0.10);
-            overflow: hidden; margin-top: 9px;
+            height: 5px; border-radius: 99px;
+            background: #f1f5f9;
+            overflow: hidden; margin-top: 10px;
         }
         #portal-usage .pu-fill {
             height: 100%; border-radius: 99px;
@@ -73,20 +84,49 @@
         }
         #portal-usage .pu-foot {
             display: flex; justify-content: space-between; align-items: center;
-            margin-top: 9px; font-size: 0.7rem; color: rgba(255,255,255,0.62);
+            margin-top: 9px; font-size: 0.72rem; color: #64748b;
+        }
+        #portal-usage .pu-foot .pu-svc {
+            font-size: 0.66rem; font-weight: 600; color: #94a3b8;
+            letter-spacing: 0.02em;
         }
         #portal-usage .pu-reset {
-            margin-top: 7px; font-size: 0.72rem; color: #fef3c7;
+            margin-top: 4px; font-size: 0.72rem; color: #475569;
         }
+        #portal-usage .pu-reset b { color: #0f172a; font-weight: 700; }
+        /* Dark-mode adaptation when StealthWriter (or whichever service) is in dark mode.
+           We default to the light card; users in pure dark themes will see this still
+           reads cleanly because StealthWriter's surrounding chrome is also light. */
+        [data-theme="dark"] #portal-usage {
+            background: #1f2937;
+            color: #f1f5f9;
+            border-color: rgba(255,255,255,0.08);
+            box-shadow:
+                0 1px 2px rgba(0,0,0,0.25),
+                0 10px 30px rgba(0,0,0,0.35);
+        }
+        [data-theme="dark"] #portal-usage .pu-label { color: #94a3b8; }
+        [data-theme="dark"] #portal-usage.is-warn .pu-label { color: #fbbf24; }
+        [data-theme="dark"] #portal-usage.is-crit .pu-label { color: #fca5a5; }
+        [data-theme="dark"] #portal-usage .pu-num { color: #ffffff; }
+        [data-theme="dark"] #portal-usage .pu-num small { color: #64748b; }
+        [data-theme="dark"] #portal-usage.is-crit .pu-num { color: #fca5a5; }
+        [data-theme="dark"] #portal-usage .pu-bar { background: rgba(255,255,255,0.08); }
+        [data-theme="dark"] #portal-usage .pu-foot { color: #94a3b8; }
+        [data-theme="dark"] #portal-usage .pu-foot .pu-svc { color: #64748b; }
+        [data-theme="dark"] #portal-usage .pu-reset { color: #cbd5e1; }
+        [data-theme="dark"] #portal-usage .pu-reset b { color: #fff; }
+
         @media (max-width: 600px) {
             #portal-usage {
-                bottom: 20px; right: 16px; left: auto;
+                bottom: 18px; right: 14px; left: auto;
                 min-width: 0;
-                width: calc(100vw - 32px);
+                width: calc(100vw - 28px);
                 max-width: 320px;
-                padding: 11px 14px;
-                border-radius: 16px;
+                padding: 11px 13px 10px;
+                border-radius: 13px;
             }
+            #portal-usage .pu-num { font-size: 0.95rem; }
         }
     </style>
 </head>
@@ -316,24 +356,29 @@
             const pct = limit > 0 ? Math.min(100, (used / limit) * 100) : 0;
             const tone = remaining <= 0 ? 'crit' : (remaining / limit <= 0.33 ? 'warn' : 'ok');
             const palette = {
-                ok:   { fill: 'linear-gradient(90deg,#34d399,#10b981)', text: '#a7f3d0', label: 'Daily usage' },
-                warn: { fill: 'linear-gradient(90deg,#fbbf24,#f59e0b)', text: '#fde68a', label: 'Running low' },
-                crit: { fill: 'linear-gradient(90deg,#f87171,#ef4444)', text: '#fecaca', label: 'Limit reached' }
+                ok:   { fill: 'linear-gradient(90deg,#22c55e,#16a34a)', label: 'Daily usage' },
+                warn: { fill: 'linear-gradient(90deg,#f59e0b,#ea580c)', label: 'Running low' },
+                crit: { fill: 'linear-gradient(90deg,#ef4444,#dc2626)', label: 'Limit reached' }
             }[tone];
 
+            // Set tone class so the styled classes (is-ok / is-warn / is-crit)
+            // can recolor labels without re-rendering on every poll.
+            el.classList.remove('is-ok', 'is-warn', 'is-crit');
+            el.classList.add('is-' + tone);
+
             const resetLine = (_puData.reset_at && remaining <= 0)
-                ? '<div class="pu-reset">resets in <span id="pu-reset-cd">…</span></div>'
+                ? '<div class="pu-reset">Resets in <b id="pu-reset-cd">…</b></div>'
                 : '';
 
             el.innerHTML =
                 '<div class="pu-row">' +
-                    '<div class="pu-label" style="color:' + palette.text + '">' + palette.label + '</div>' +
-                    '<div class="pu-num">' + used + '<small> / ' + limit + '</small></div>' +
+                    '<div class="pu-label">' + palette.label + '</div>' +
+                    '<div class="pu-num">' + used + '<small>/ ' + limit + '</small></div>' +
                 '</div>' +
                 '<div class="pu-bar"><div class="pu-fill" style="width:' + pct + '%; background:' + palette.fill + ';"></div></div>' +
                 '<div class="pu-foot">' +
                     '<span>' + (remaining > 0 ? (remaining + ' left today') : 'Daily limit reached') + '</span>' +
-                    '<span style="font-size:0.62rem;opacity:0.85;">' + _puData.service.name + '</span>' +
+                    '<span class="pu-svc">' + _puData.service.name + '</span>' +
                 '</div>' +
                 resetLine;
 
