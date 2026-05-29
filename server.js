@@ -464,7 +464,7 @@ app.use(async (req, res, next) => {
         }
 
         const assignment = await get(`
-            SELECT a.cookie_id, u.status, c.data as cookie_data 
+            SELECT a.cookie_id, a.daily_limit_override, u.status, c.data as cookie_data 
             FROM user_assignments a
             JOIN users u ON a.user_id = u.id
             LEFT JOIN cookies c ON a.cookie_id = c.id
@@ -480,42 +480,29 @@ app.use(async (req, res, next) => {
         }
 
         // --- DAILY USAGE LIMIT ---
-        // Only POST/PUT requests count as a "use" — GETs for the page itself,
-        // assets, and idle telemetry are free. NULL or 0 daily_limit = no cap.
-        // Uses an atomic check-and-record (single DB transaction with
-        // BEGIN IMMEDIATE) so two parallel requests cannot both slip past.
-        const dailyLimit = service.daily_limit ? parseInt(service.daily_limit, 10) : 0;
-        const isWriteRequest = req.method === 'POST' || req.method === 'PUT';
-
-        // Heuristic for what counts as a "real" billable action vs. UI noise
-        // like "refresh alternatives" / synonym lookup / autosave / telemetry.
+        // STRICT MODE: a POST/PUT only counts toward the cap if its URL
+        // contains the service's configured `billable_path` (e.g.
+        // "/api/humanize" for StealthWriter). Everything else — autosave,
+        // draft sync, telemetry, alternatives refresh, GETs — never counts.
         //
-        // 1. Skip URLs that smell like word-level helpers (alternatives,
-        //    synonyms, regenerate-word, etc).
-        // 2. Skip tiny request bodies. A full humanize carries the whole
-        //    pasted text (hundreds to thousands of bytes); an alternatives
-        //    re-roll carries a word or a short range (typically <100 bytes).
-        const lowUrl = (req.url || '').toLowerCase();
-        const looksLikeWordHelper = (
-            lowUrl.includes('alternative') ||
-            lowUrl.includes('synonym') ||
-            lowUrl.includes('regenerate') ||
-            lowUrl.includes('autosave') ||
-            lowUrl.includes('telemetry') ||
-            lowUrl.includes('analytics') ||
-            lowUrl.includes('feedback') ||
-            lowUrl.includes('rate') && lowUrl.includes('limit')
-        );
-        const contentLength = parseInt(req.headers['content-length'] || '0', 10) || 0;
-        // Threshold tuned for StealthWriter: a real humanize submission is
-        // always larger than 200 bytes (text + level + model fields). Tweak
-        // here if needed.
-        const BILLABLE_MIN_BYTES = 200;
-        const isBillableAction = isWriteRequest &&
-                                  !looksLikeWordHelper &&
-                                  contentLength >= BILLABLE_MIN_BYTES;
+        // Per-user override: user_assignments.daily_limit_override, when set,
+        // overrides the service's default daily_limit for THIS user only.
+        // NULL = inherit service default.
+        const isWriteRequest = req.method === 'POST' || req.method === 'PUT';
+        const billablePath = (service.billable_path || '').trim();
+        const userOverride = assignment.daily_limit_override ? parseInt(assignment.daily_limit_override, 10) : null;
+        const serviceDefault = service.daily_limit ? parseInt(service.daily_limit, 10) : 0;
+        // Effective cap for this user. Override > service default.
+        // 0 / null on either layer = unlimited (override 0 also disables cap).
+        const effectiveLimit = (userOverride !== null && Number.isFinite(userOverride))
+            ? userOverride
+            : serviceDefault;
 
-        if (dailyLimit > 0 && isBillableAction) {
+        const isBillableAction = isWriteRequest &&
+                                  billablePath.length > 0 &&
+                                  (req.url || '').indexOf(billablePath) !== -1;
+
+        if (effectiveLimit > 0 && isBillableAction) {
             // Debounce: if the same user fired another POST inside the window,
             // don't count it again — but ALSO don't run the gate, so we don't
             // double-count or over-throttle. The first POST already recorded.
@@ -525,7 +512,7 @@ app.use(async (req, res, next) => {
 
             if (!inDebounce) {
                 try {
-                    const verdict = await checkAndRecordUsage(verified.id, service.id, dailyLimit);
+                    const verdict = await checkAndRecordUsage(verified.id, service.id, effectiveLimit);
 
                     if (!verdict.allowed) {
                         const resetAt = verdict.resetAt;
@@ -540,7 +527,7 @@ app.use(async (req, res, next) => {
                                            req.headers['x-requested-with'] === 'XMLHttpRequest' ||
                                            isApiPath;
 
-                        const friendlyMsg = `You've used your daily allowance of ${dailyLimit} ${service.name} actions. Your access resets in about ${hrsLeft} hours (${minsLeft} min). Contact your administrator if you need more.`;
+                        const friendlyMsg = `You've used your daily allowance of ${effectiveLimit} ${service.name} actions. Your access resets in about ${hrsLeft} hours (${minsLeft} min). Contact your administrator if you need more.`;
 
                         if (wantsJson) {
                             res.setHeader('Content-Type', 'application/json');
@@ -549,7 +536,7 @@ app.use(async (req, res, next) => {
                                 message: friendlyMsg,
                                 detail: friendlyMsg,
                                 limit_reached: true,
-                                daily_limit: dailyLimit,
+                                daily_limit: effectiveLimit,
                                 used: verdict.used,
                                 reset_at: resetAt,
                                 reset_in_minutes: minsLeft,
@@ -562,7 +549,7 @@ app.use(async (req, res, next) => {
                                 <div style="font-size:48px;margin-bottom:8px;">⏳</div>
                                 <h2 style="margin:0 0 12px;color:#dc2626;">Daily limit reached</h2>
                                 <p style="margin:0 0 8px;font-size:1.1rem;">You've used <b>${service.name}</b> ${verdict.used} times in the last 24 hours.</p>
-                                <p style="margin:0 0 20px;color:#475569;">Your daily allowance is <b>${dailyLimit}</b>. Try again in about <b>${hrsLeft} hours</b> (${minsLeft} min).</p>
+                                <p style="margin:0 0 20px;color:#475569;">Your daily allowance is <b>${effectiveLimit}</b>. Try again in about <b>${hrsLeft} hours</b> (${minsLeft} min).</p>
                                 <p style="font-size:0.85rem;color:#64748b;">Need more? Contact your administrator.</p>
                             </div>
                         `);

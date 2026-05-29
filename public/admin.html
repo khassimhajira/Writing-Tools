@@ -200,6 +200,7 @@
                 <div class="form-group"><label>URL Slug</label><input type="text" id="service-slug" required placeholder="chatgpt"></div>
                 <div class="form-group"><label>aMember Product ID</label><input type="text" id="service-amember-id" placeholder="e.g. 5"></div>
                 <div class="form-group"><label>Daily Limit per User <span style="font-size:0.7rem; color:var(--text-secondary);">(POSTs per 24h, blank = unlimited)</span></label><input type="number" min="0" step="1" id="service-daily-limit" placeholder="e.g. 6"></div>
+                <div class="form-group" style="grid-column: 1 / -1;"><label>Billable Path <span style="font-size:0.7rem; color:var(--text-secondary);">(only requests whose URL contains this string count toward the cap. blank = nothing counts)</span></label><input type="text" id="service-billable-path" placeholder="/api/humanize"></div>
                 <div class="form-group" style="grid-column: 1 / -1;"><label>Target URL</label><input type="url" id="service-url" required placeholder="https://chat.openai.com"></div>
                 <div class="form-group" style="grid-column: 1 / -1;">
                     <label>Icon Preview</label>
@@ -513,6 +514,7 @@
             document.getElementById('service-js').value = s.injection_js || '';
             document.getElementById('service-amember-id').value = s.amember_product_id || '';
             document.getElementById('service-daily-limit').value = (s.daily_limit && s.daily_limit > 0) ? s.daily_limit : '';
+            document.getElementById('service-billable-path').value = s.billable_path || '';
             updateIconPreview(s.icon_svg || '');
             openServiceModal(true); // Pass true to indicate it is an edit
         }
@@ -533,7 +535,8 @@
                     if (!raw) return null;
                     const n = parseInt(raw, 10);
                     return (Number.isFinite(n) && n > 0) ? n : null;
-                })()
+                })(),
+                billable_path: document.getElementById('service-billable-path').value.trim()
             };
             const method = id ? 'PUT' : 'POST', url = id ? `/hub/api/admin/services/${id}` : '/hub/api/admin/services';
             const res = await fetch(url, { method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
@@ -553,18 +556,53 @@
             document.getElementById('assign-username').innerText = u.username;
             document.getElementById('assign-grid').innerHTML = services.map(s => {
                 const cur = u.assignments.find(a => a.service_id === s.id);
+                const isAssigned = !!(cur && cur.cookie_id);
+                const serviceDefault = s.daily_limit && s.daily_limit > 0 ? s.daily_limit : null;
+                const overrideValue = (cur && cur.daily_limit_override) ? cur.daily_limit_override : '';
+                const overridePlaceholder = serviceDefault ? `inherit ${serviceDefault}` : 'no cap';
+                // Only show the override input when service has a cap configured AND the user is assigned.
+                const overrideHtml = (serviceDefault && isAssigned) ? `
+                    <div style="display:flex; align-items:center; gap:6px; font-size:0.75rem; color:var(--text-secondary);">
+                        <span>Cap:</span>
+                        <input type="number" min="0" step="1" value="${overrideValue}" placeholder="${overridePlaceholder}" id="ovr-${u.id}-${s.id}" style="width:80px; padding:4px 6px; font-size:0.78rem;">
+                        <button onclick="setUserOverride(${u.id}, ${s.id})" style="width:auto; padding:4px 8px; font-size:10px;">SAVE</button>
+                    </div>` : '';
                 return `
-                    <div style="display:flex; justify-content:space-between; align-items:center; padding: 10px; background:var(--input-bg); border-radius:8px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; padding: 10px; background:var(--input-bg); border-radius:8px; flex-wrap:wrap; gap:8px;">
                         <span style="font-weight:600;">${s.name}</span>
-                        <select onchange="assignToService(${u.id}, ${s.id}, this.value)" style="width: auto; padding: 4px;">
-                            <option value="">- No Access -</option>
-                            ${slots.filter(sl => sl.service_id === s.id).map(sl => `<option value="${sl.id}" ${cur?.cookie_id === sl.id ? 'selected' : ''}>${sl.name}</option>`).join('')}
-                        </select>
+                        <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+                            ${overrideHtml}
+                            <select onchange="assignToService(${u.id}, ${s.id}, this.value)" style="width: auto; padding: 4px;">
+                                <option value="">- No Access -</option>
+                                ${slots.filter(sl => sl.service_id === s.id).map(sl => `<option value="${sl.id}" ${cur?.cookie_id === sl.id ? 'selected' : ''}>${sl.name}</option>`).join('')}
+                            </select>
+                        </div>
                     </div>`;}).join('');
             document.getElementById('assign-modal').style.display = 'flex';
         }
         function closeAssignModal() { document.getElementById('assign-modal').style.display = 'none'; }
         async function assignToService(uid, sid, cid) { await fetch(`/hub/api/admin/users/${uid}/assign`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({service_id:sid, cookie_id:cid?parseInt(cid):null}) }); loadData(); }
+        async function setUserOverride(uid, sid) {
+            const input = document.getElementById('ovr-' + uid + '-' + sid);
+            const raw = (input.value || '').trim();
+            const limit = raw === '' ? null : parseInt(raw, 10);
+            try {
+                const r = await fetch(`/hub/api/admin/users/${uid}/limit-override`, {
+                    method: 'PUT',
+                    headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({ service_id: sid, limit })
+                });
+                const data = await r.json().catch(() => ({}));
+                if (r.ok) {
+                    showAlert(limit ? `Custom cap set: ${limit}/24h` : 'Override cleared (inheriting service default)');
+                    loadData();
+                } else {
+                    showAlert(data.error || 'Save failed', 'error');
+                }
+            } catch(e) {
+                showAlert('Save failed: ' + e.message, 'error');
+            }
+        }
         function openUserModal() { document.getElementById('user-modal').style.display='flex'; }
         function closeUserModal() { document.getElementById('user-modal').style.display='none'; }
         async function editUser(id) { const u = users.find(x => x.id === id); document.getElementById('edit-user-id').value = u.id; document.getElementById('user-name').value = u.username; document.getElementById('user-email').value = u.email; openUserModal(); }

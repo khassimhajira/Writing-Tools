@@ -34,20 +34,21 @@ router.get('/services', async (req, res) => {
 
 // Add new service
 router.post('/services', async (req, res) => {
-    const { name, target_url, icon_svg, text_svg, injection_js, amember_product_id, daily_limit } = req.body;
+    const { name, target_url, icon_svg, text_svg, injection_js, amember_product_id, daily_limit, billable_path } = req.body;
     const slug = (req.body.slug || '').trim();
     const dl = (daily_limit === '' || daily_limit == null) ? null : parseInt(daily_limit, 10);
+    const bp = typeof billable_path === 'string' ? billable_path.trim() : '';
     try {
-        await run(`INSERT INTO services (name, slug, target_url, icon_svg, text_svg, injection_js, amember_product_id, daily_limit) 
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, 
-                   [name, slug, target_url, icon_svg, text_svg, injection_js, amember_product_id || null, Number.isFinite(dl) && dl > 0 ? dl : null]);
+        await run(`INSERT INTO services (name, slug, target_url, icon_svg, text_svg, injection_js, amember_product_id, daily_limit, billable_path) 
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
+                   [name, slug, target_url, icon_svg, text_svg, injection_js, amember_product_id || null, Number.isFinite(dl) && dl > 0 ? dl : null, bp || null]);
         res.status(201).json({ message: 'Service added' });
     } catch(e) { res.status(500).json({ error: 'Database error: ' + e.message }); }
 });
 
 // Update service
 router.put('/services/:id', async (req, res) => {
-    const { name, target_url, icon_svg, text_svg, injection_js, amember_product_id, daily_limit } = req.body;
+    const { name, target_url, icon_svg, text_svg, injection_js, amember_product_id, daily_limit, billable_path } = req.body;
     const slug = (req.body.slug || '').trim();
 
     // SAFETY: only overwrite daily_limit when the client explicitly sends it.
@@ -58,6 +59,7 @@ router.put('/services/:id', async (req, res) => {
     //   - number    (set/change):     parseInt, must be > 0.
     let dlSql = '';
     let dlParam = null;
+    let dlHasParam = false;
     if (Object.prototype.hasOwnProperty.call(req.body, 'daily_limit')) {
         if (daily_limit === '' || daily_limit === null) {
             dlSql = ', daily_limit = NULL';
@@ -66,16 +68,32 @@ router.put('/services/:id', async (req, res) => {
             if (Number.isFinite(n) && n > 0) {
                 dlSql = ', daily_limit = ?';
                 dlParam = n;
+                dlHasParam = true;
             } else {
                 dlSql = ', daily_limit = NULL';
             }
         }
     }
 
+    // Same preserve-when-omitted policy for billable_path.
+    let bpSql = '';
+    let bpParam = null;
+    let bpHasParam = false;
+    if (Object.prototype.hasOwnProperty.call(req.body, 'billable_path')) {
+        if (billable_path === '' || billable_path === null) {
+            bpSql = ', billable_path = NULL';
+        } else if (typeof billable_path === 'string') {
+            bpSql = ', billable_path = ?';
+            bpParam = billable_path.trim();
+            bpHasParam = true;
+        }
+    }
+
     try {
         const params = [name, slug, target_url, icon_svg, text_svg, injection_js, amember_product_id];
-        let sql = `UPDATE services SET name = ?, slug = ?, target_url = ?, icon_svg = ?, text_svg = ?, injection_js = ?, amember_product_id = ?${dlSql} WHERE id = ?`;
-        if (dlParam !== null) params.push(dlParam);
+        let sql = `UPDATE services SET name = ?, slug = ?, target_url = ?, icon_svg = ?, text_svg = ?, injection_js = ?, amember_product_id = ?${dlSql}${bpSql} WHERE id = ?`;
+        if (dlHasParam) params.push(dlParam);
+        if (bpHasParam) params.push(bpParam);
         params.push(req.params.id);
 
         await run(sql, params);
@@ -173,7 +191,7 @@ router.get('/users', async (req, res) => {
         `);
         
         const assignments = await query(`
-            SELECT a.user_id, a.service_id, a.cookie_id, c.name as cookie_name, s.name as service_name
+            SELECT a.user_id, a.service_id, a.cookie_id, a.daily_limit_override, c.name as cookie_name, s.name as service_name, s.daily_limit as service_default_limit
             FROM user_assignments a
             JOIN services s ON a.service_id = s.id
             LEFT JOIN cookies c ON a.cookie_id = c.id
@@ -371,6 +389,39 @@ router.post('/users/:id/assign', async (req, res) => {
     } catch(e) { 
         console.error('Assignment Error:', e);
         res.status(500).json({ error: 'Database error' }); 
+    }
+});
+
+// Per-user daily-limit override for a specific service.
+//   PUT /users/:id/limit-override   body: { service_id, limit }
+//     limit = null or empty:  clear override (user inherits service default)
+//     limit = positive int:   user's personal cap on this service
+//
+// The user must already have an assignment row for this service. We update
+// it in place rather than creating one, so revoking access stays a separate
+// operation.
+router.put('/users/:id/limit-override', async (req, res) => {
+    const { service_id, limit } = req.body;
+    if (!service_id) return res.status(400).json({ error: 'service_id required' });
+    let normalized = null;
+    if (limit !== '' && limit !== null && limit !== undefined) {
+        const n = parseInt(limit, 10);
+        if (Number.isFinite(n) && n > 0) normalized = n;
+    }
+    try {
+        const result = await run(
+            'UPDATE user_assignments SET daily_limit_override = ? WHERE user_id = ? AND service_id = ?',
+            [normalized, req.params.id, service_id]
+        );
+        if (result.changes === 0) {
+            return res.status(404).json({ error: 'User has no assignment for this service. Assign them first.' });
+        }
+        const io = req.app.get('io');
+        if (io) io.to(`user_${req.params.id}`).emit('force_refresh');
+        res.json({ message: 'Override updated', daily_limit_override: normalized });
+    } catch(e) {
+        console.error('Override Error:', e);
+        res.status(500).json({ error: 'Database error' });
     }
 });
 

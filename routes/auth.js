@@ -154,7 +154,8 @@ router.get('/services', async (req, res) => {
         }
 
         const services = await query(`
-            SELECT s.id, s.name, s.slug, s.icon_svg, s.text_svg, s.daily_limit
+            SELECT s.id, s.name, s.slug, s.icon_svg, s.text_svg,
+                   COALESCE(a.daily_limit_override, s.daily_limit) AS daily_limit
             FROM user_assignments a
             JOIN services s ON a.service_id = s.id
             WHERE a.user_id = ?
@@ -275,9 +276,16 @@ router.get('/my-usage/:slug', async (req, res) => {
         );
         if (!service) return res.status(404).json({ error: 'Service not found' });
 
-        const limit = service.daily_limit && service.daily_limit > 0 ? service.daily_limit : 0;
+        // Look up this user's per-service override; falls back to service default.
+        const assignment = await get(
+            'SELECT daily_limit_override FROM user_assignments WHERE user_id = ? AND service_id = ?',
+            [verified.id, service.id]
+        );
+        const override = assignment && assignment.daily_limit_override ? parseInt(assignment.daily_limit_override, 10) : null;
+        const serviceDefault = service.daily_limit && service.daily_limit > 0 ? service.daily_limit : 0;
+        const limit = (override !== null && Number.isFinite(override)) ? override : serviceDefault;
+
         if (!limit) {
-            // No cap on this service — caller should hide the card.
             return res.json({
                 service: { name: service.name, slug: service.slug, daily_limit: null },
                 limited: false

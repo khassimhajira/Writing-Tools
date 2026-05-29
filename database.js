@@ -154,6 +154,18 @@ function initializeDB() {
         // Per-service daily usage cap. NULL or 0 = no limit. Existing services
         // get NULL by default, so behavior is unchanged unless an admin sets it.
         db.run(`ALTER TABLE services ADD COLUMN daily_limit INTEGER`, (err) => {});
+        // Per-service billable path. Only POST/PUT requests whose URL contains
+        // this string count toward the daily cap. Drops the old size-heuristic
+        // approach which was too lax and let autosave/draft-sync POSTs slip
+        // through. NULL means: never count anything (admin can clear it to
+        // disable counting).
+        db.run(`ALTER TABLE services ADD COLUMN billable_path TEXT`, (err) => {});
+        // Default known-good billable path for stealthwriter on first migration
+        // so existing limit-set installations keep working without manual edit.
+        db.run(`UPDATE services SET billable_path = '/api/humanize' WHERE slug = 'stealth' AND (billable_path IS NULL OR billable_path = '')`, (err) => {});
+        // Per-user override for daily_limit, attached to user_assignments.
+        // NULL means "inherit the service's default daily_limit".
+        db.run(`ALTER TABLE user_assignments ADD COLUMN daily_limit_override INTEGER`, (err) => {});
 
         // Service usage log: one row per "billable" proxy action (POST/PUT)
         // per user per service, used to enforce the rolling 24h limit.
