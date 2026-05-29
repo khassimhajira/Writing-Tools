@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="light">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)">
-    <meta name="theme-color" content="#f8fafc" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#0F0720" media="(prefers-color-scheme: dark)">
+    <meta name="theme-color" content="#FAF8FF" media="(prefers-color-scheme: light)">
     <title>StealthWriter Hub | Portal</title>
     <link rel="stylesheet" href="style.css">
     <link rel="icon" href="FAVICON.png">
@@ -130,11 +130,12 @@
             }
             #portal-usage .pu-num { font-size: 0.95rem; }
         }
-        /* On the smallest phones, stack the usage pill ABOVE the back button
-           by anchoring it higher so they don't fight for the bottom row. */
-        @media (max-width: 480px) {
+        /* On phones, stack the usage pill ABOVE the back button so they
+           never compete for the bottom row. The back button is ~50px tall
+           with 14px bottom margin = ~64px, plus 12px gap = pill at 80px. */
+        @media (max-width: 768px) {
             #portal-usage {
-                bottom: 78px !important;
+                bottom: 80px !important;
                 right: 14px !important;
                 left: 14px !important;
                 width: auto !important;
@@ -556,8 +557,8 @@
         document.getElementById('logout-btn').onclick = () => { window.location.href = '/hub/api/auth/logout'; };
         const themeBtn = document.getElementById('theme-btn'), themeCont = document.getElementById('theme-icon-container');
         function updateThemeUI(t) { themeCont.innerHTML = t==='light'?'☾':'☼'; }
-        themeBtn.onclick = () => { const cur = document.documentElement.getAttribute('data-theme')||'dark', next = cur==='dark'?'light':'dark'; document.documentElement.setAttribute('data-theme', next); localStorage.setItem('hub-theme', next); updateThemeUI(next); };
-        const saved = localStorage.getItem('hub-theme')||'dark'; document.documentElement.setAttribute('data-theme', saved); updateThemeUI(saved);
+        themeBtn.onclick = () => { const cur = document.documentElement.getAttribute('data-theme')||'light', next = cur==='dark'?'light':'dark'; document.documentElement.setAttribute('data-theme', next); localStorage.setItem('hub-theme', next); updateThemeUI(next); };
+        const saved = localStorage.getItem('hub-theme')||'light'; document.documentElement.setAttribute('data-theme', saved); updateThemeUI(saved);
         init();
     </script>
 </body>

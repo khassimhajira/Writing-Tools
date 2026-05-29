@@ -4,37 +4,77 @@
     font-weight: 100 900;
 }
 
+/* ============================================================
+   THEME — Scholar Genie Premium Tools palette (mirror of
+   app.scholargenie.org). Token NAMES are kept identical to the
+   previous theme so existing rules keep working unchanged; only
+   their VALUES are swapped to the purple system.
+   ============================================================ */
 :root {
-    /* EXACT BRAND COLORS FROM LOGO */
-    --brand-navy: #001f4d;
-    --brand-blue: #0070f3; /* Brighter, more vibrant blue for Dark Mode */
+    /* Purple system tokens (matched to app.scholargenie.org). */
+    --pt-deep:    #6B21A8;
+    --pt-primary: #7C3AED;
+    --pt-mid:     #8B5CF6;
+    --pt-light:   #A78BFA;
+    --pt-soft:    #C4B5FD;
+    --pt-wash:    #EDE9FE;
+    --pt-ghost:   #F5F3FF;
+    --pt-bg:      #FAF8FF;
+    --pt-sb-bg:   #0F0720;
+    --pt-sb-hover:#251548;
+    --pt-text:    #1E1133;
+    --pt-text-sub:#6B5D85;
+
+    /* Legacy token names — point them to the new palette so existing
+       rules across the codebase pick up the purple look automatically. */
+    --brand-navy: #0F0720;        /* deep dark purple, for sidebar / nav surfaces */
+    --brand-blue: #7C3AED;        /* primary purple */
     
-    --bg-color: #0b0e14;
-    --card-bg: rgba(22, 27, 34, 0.7);
-    --text-primary: #ffffff;
-    --text-secondary: #8b949e;
-    --primary-color: var(--brand-blue); 
-    --primary-hover: #3291ff;
-    --border-color: rgba(255, 255, 255, 0.1);
-    --input-bg: #161b22;
-    --shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    /* Default to LIGHT (purple-on-white) since the new theme is light. */
+    --bg-color: #FAF8FF;
+    --card-bg: #ffffff;
+    --text-primary: #1E1133;
+    --text-secondary: #6B5D85;
+    --primary-color: #7C3AED;
+    --primary-hover: #6B21A8;
+    --border-color: rgba(124, 58, 237, 0.12);
+    --input-bg: #ffffff;
+    --shadow: 0 4px 16px rgba(124, 58, 237, 0.08);
+    --nav-hover: rgba(139, 92, 246, 0.08);
+}
+
+[data-theme="dark"] {
+    /* Dark variant — deep dark purple background, kept for users who
+       toggle dark theme. Buttons stay purple-gradient; surfaces darken. */
+    --brand-navy: #0F0720;
+    --brand-blue: #A78BFA;        /* lighter purple for contrast on dark */
+    --bg-color: #0F0720;
+    --card-bg: rgba(37, 21, 72, 0.55);
+    --text-primary: #F5F3FF;
+    --text-secondary: #B8A9D4;
+    --primary-color: #A78BFA;
+    --primary-hover: #C4B5FD;
+    --border-color: rgba(167, 139, 250, 0.18);
+    --input-bg: #251548;
+    --shadow: 0 8px 32px rgba(15, 7, 32, 0.55);
+    --nav-hover: rgba(167, 139, 250, 0.12);
 }
 
 [data-theme="light"] {
-    --brand-blue: #0059b3; /* Professional navy blue for Light Mode */
-    --primary-color: #0059b3; /* Explicitly redefine for light mode */
-    --primary-hover: #004d99;
-    --bg-color: #f8fafc;
-    --card-bg: rgba(255, 255, 255, 0.9);
-    --text-primary: #0f172a;
-    --text-secondary: #475569;
-    --border-color: rgba(0, 0, 0, 0.1);
+    /* Explicit light overrides (same as :root defaults — kept here so the
+       toggle from dark→light writes a stable state). */
+    --brand-navy: #0F0720;
+    --brand-blue: #7C3AED;
+    --bg-color: #FAF8FF;
+    --card-bg: #ffffff;
+    --text-primary: #1E1133;
+    --text-secondary: #6B5D85;
+    --primary-color: #7C3AED;
+    --primary-hover: #6B21A8;
+    --border-color: rgba(124, 58, 237, 0.12);
     --input-bg: #ffffff;
-    --shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-    
-    /* Light mode sidebar overrides */
-    --brand-navy: #f1f5f9; 
-    --nav-hover: rgba(0, 0, 0, 0.05);
+    --shadow: 0 4px 16px rgba(124, 58, 237, 0.08);
+    --nav-hover: rgba(139, 92, 246, 0.08);
 }
 
 
@@ -50,8 +90,8 @@
 body {
     background-color: var(--bg-color);
     background-image: 
-        radial-gradient(at 0% 0%, rgba(0, 89, 179, 0.05) 0px, transparent 50%),
-        radial-gradient(at 100% 100%, rgba(0, 89, 179, 0.05) 0px, transparent 50%);
+        radial-gradient(at 0% 0%, rgba(124, 58, 237, 0.06) 0px, transparent 50%),
+        radial-gradient(at 100% 100%, rgba(124, 58, 237, 0.06) 0px, transparent 50%);
     color: var(--text-primary);
     min-height: 100vh;
     display: flex;
@@ -113,7 +153,7 @@ footer.site-footer {
     text-transform: uppercase;
     display: flex;
     align-items: center;
-    filter: brightness(1.5) saturate(1.8) drop-shadow(0 0 10px rgba(0, 89, 179, 0.4));
+    filter: brightness(1.5) saturate(1.8) drop-shadow(0 0 10px rgba(124, 58, 237, 0.4));
     transition: all 0.3s ease;
     object-fit: contain;
     user-select: none;
@@ -276,7 +316,7 @@ header {
 
 .nav-link.active {
     border-left: 4px solid var(--brand-blue);
-    background: rgba(0, 89, 179, 0.1);
+    background: rgba(124, 58, 237, 0.1);
 }
 
 .main-content {
@@ -420,17 +460,26 @@ header {
 }
 
 button {
-    background: var(--primary-color);
+    background: linear-gradient(135deg, var(--pt-primary), var(--pt-mid));
     color: white;
     border: none;
     padding: 0.75rem 1.5rem;
-    border-radius: 8px;
+    border-radius: 12px;
     font-weight: 600;
     cursor: pointer;
-    transition: background 0.2s;
+    transition: all 0.2s ease;
     width: 100%;
+    box-shadow: 0 4px 14px rgba(124, 58, 237, 0.18);
 }
-button:hover { background: var(--primary-hover); }
+button:hover {
+    background: linear-gradient(135deg, var(--pt-deep), var(--pt-primary));
+    box-shadow: 0 6px 20px rgba(124, 58, 237, 0.32);
+    transform: translateY(-1px);
+}
+button:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 8px rgba(124, 58, 237, 0.18);
+}
 
 /* FULLSCREEN PORTAL MODE */
 body.portal-open {
@@ -453,30 +502,29 @@ body.portal-open main.container {
 #portal-exit {
     display: none;
     position: fixed;
-    bottom: 40px; /* Moved back to bottom */
-    left: 40px;   /* Moved back to left */
+    bottom: 40px;
+    left: 40px;
     z-index: 10001;
-    background: var(--primary-color);
+    background: linear-gradient(135deg, var(--pt-primary), var(--pt-mid));
     color: #ffffff !important;
     border: none;
-    padding: 1rem 2rem; /* Increased padding to fit text perfectly */
+    padding: 1rem 2rem;
     border-radius: 50px;
-    font-weight: 700;
-
+    font-weight: 600;
     font-size: 0.95rem;
     cursor: pointer;
     align-items: center;
     gap: 12px;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 8px 24px rgba(124, 58, 237, 0.35);
     transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-    white-space: nowrap; /* Ensures text never wraps or overflows */
+    white-space: nowrap;
     width: fit-content;
 }
 
 #portal-exit:hover {
-    background: #00428a;
-    transform: scale(1.05) translateY(-5px);
-    box-shadow: 0 15px 40px rgba(0, 89, 179, 0.6);
+    background: linear-gradient(135deg, var(--pt-deep), var(--pt-primary));
+    transform: scale(1.04) translateY(-3px);
+    box-shadow: 0 12px 32px rgba(124, 58, 237, 0.5);
 }
 
 #portal-exit svg {
@@ -491,7 +539,7 @@ body.portal-open main.container {
     }
 }
 
-#portal-exit:hover { transform: translateY(-3px); background: var(--brand-blue); }
+/* (removed duplicate :hover rule that was overriding the gradient with a flat purple) */
 
 /* MODALS */
 .modal-overlay {
@@ -705,7 +753,7 @@ body.portal-open main.container {
     background: var(--card-bg);
     border-color: var(--brand-blue);
     transform: translateY(-5px);
-    box-shadow: 0 15px 35px rgba(0, 89, 179, 0.15);
+    box-shadow: 0 15px 35px rgba(124, 58, 237, 0.15);
 }
 
 .logo-composite {
