@@ -21,7 +21,7 @@ const { HttpsProxyAgent } = require('https-proxy-agent');
 const axios = require('axios');
 
 // MVC Modules
-const { get, run, query, db, pickLeastLoadedCookie, countRecentUsage, recordUsage, USAGE_WINDOW_MS } = require('./database');
+const { get, run, query, db, pickLeastLoadedCookie, countRecentUsage, recordUsage, checkAndRecordUsage, USAGE_WINDOW_MS } = require('./database');
 const { router: authRouter, JWT_SECRET } = require('./routes/auth');
 const adminRouter = require('./routes/admin');
 
@@ -461,64 +461,66 @@ app.use(async (req, res, next) => {
         // --- DAILY USAGE LIMIT ---
         // Only POST/PUT requests count as a "use" — GETs for the page itself,
         // assets, and idle telemetry are free. NULL or 0 daily_limit = no cap.
+        // Uses an atomic check-and-record (single DB transaction with
+        // BEGIN IMMEDIATE) so two parallel requests cannot both slip past.
         const dailyLimit = service.daily_limit ? parseInt(service.daily_limit, 10) : 0;
         const isWriteRequest = req.method === 'POST' || req.method === 'PUT';
         if (dailyLimit > 0 && isWriteRequest) {
-            try {
-                const { count, oldest } = await countRecentUsage(verified.id, service.id);
-                if (count >= dailyLimit) {
-                    const resetAt = (oldest || Date.now()) + USAGE_WINDOW_MS;
-                    const minsLeft = Math.max(1, Math.ceil((resetAt - Date.now()) / 60000));
-                    const hrsLeft = (minsLeft / 60).toFixed(1);
-                    res.status(429);
-                    res.setHeader('Retry-After', Math.ceil((resetAt - Date.now()) / 1000));
+            // Debounce: if the same user fired another POST inside the window,
+            // don't count it again — but ALSO don't run the gate, so we don't
+            // double-count or over-throttle. The first POST already recorded.
+            const key = `${verified.id}:${service.id}`;
+            const lastT = lastCountedUsage.get(key) || 0;
+            const inDebounce = (Date.now() - lastT) < USAGE_DEBOUNCE_MS;
 
-                    // Detect whether this is an API/XHR call (the front-end of
-                    // StealthWriter / ChatGPT etc expects JSON for these) vs a
-                    // top-level page navigation (where we render full HTML).
-                    const accept = (req.headers['accept'] || '').toLowerCase();
-                    const isApiPath = /\/api\/|\.json($|\?)/i.test(req.url);
-                    const wantsJson = accept.includes('application/json') ||
-                                       req.headers['x-requested-with'] === 'XMLHttpRequest' ||
-                                       isApiPath;
+            if (!inDebounce) {
+                try {
+                    const verdict = await checkAndRecordUsage(verified.id, service.id, dailyLimit);
 
-                    const friendlyMsg = `You've used your daily allowance of ${dailyLimit} ${service.name} actions. Your access resets in about ${hrsLeft} hours (${minsLeft} min). Contact your administrator if you need more.`;
+                    if (!verdict.allowed) {
+                        const resetAt = verdict.resetAt;
+                        const minsLeft = Math.max(1, Math.ceil((resetAt - Date.now()) / 60000));
+                        const hrsLeft = (minsLeft / 60).toFixed(1);
+                        res.status(429);
+                        res.setHeader('Retry-After', Math.ceil((resetAt - Date.now()) / 1000));
 
-                    if (wantsJson) {
-                        res.setHeader('Content-Type', 'application/json');
-                        return res.send(JSON.stringify({
-                            error: friendlyMsg,
-                            message: friendlyMsg,
-                            detail: friendlyMsg,
-                            limit_reached: true,
-                            daily_limit: dailyLimit,
-                            used: count,
-                            reset_at: resetAt,
-                            reset_in_minutes: minsLeft,
-                            reset_in_hours: Number(hrsLeft)
-                        }));
+                        const accept = (req.headers['accept'] || '').toLowerCase();
+                        const isApiPath = /\/api\/|\.json($|\?)/i.test(req.url);
+                        const wantsJson = accept.includes('application/json') ||
+                                           req.headers['x-requested-with'] === 'XMLHttpRequest' ||
+                                           isApiPath;
+
+                        const friendlyMsg = `You've used your daily allowance of ${dailyLimit} ${service.name} actions. Your access resets in about ${hrsLeft} hours (${minsLeft} min). Contact your administrator if you need more.`;
+
+                        if (wantsJson) {
+                            res.setHeader('Content-Type', 'application/json');
+                            return res.send(JSON.stringify({
+                                error: friendlyMsg,
+                                message: friendlyMsg,
+                                detail: friendlyMsg,
+                                limit_reached: true,
+                                daily_limit: dailyLimit,
+                                used: verdict.used,
+                                reset_at: resetAt,
+                                reset_in_minutes: minsLeft,
+                                reset_in_hours: Number(hrsLeft)
+                            }));
+                        }
+
+                        return res.send(`
+                            <div style="font-family:sans-serif;color:#0f172a;text-align:center;padding:60px 20px;max-width:560px;margin:8% auto;background:#fff;border-radius:12px;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+                                <div style="font-size:48px;margin-bottom:8px;">⏳</div>
+                                <h2 style="margin:0 0 12px;color:#dc2626;">Daily limit reached</h2>
+                                <p style="margin:0 0 8px;font-size:1.1rem;">You've used <b>${service.name}</b> ${verdict.used} times in the last 24 hours.</p>
+                                <p style="margin:0 0 20px;color:#475569;">Your daily allowance is <b>${dailyLimit}</b>. Try again in about <b>${hrsLeft} hours</b> (${minsLeft} min).</p>
+                                <p style="font-size:0.85rem;color:#64748b;">Need more? Contact your administrator.</p>
+                            </div>
+                        `);
                     }
 
-                    return res.send(`
-                        <div style="font-family:sans-serif;color:#0f172a;text-align:center;padding:60px 20px;max-width:560px;margin:8% auto;background:#fff;border-radius:12px;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
-                            <div style="font-size:48px;margin-bottom:8px;">⏳</div>
-                            <h2 style="margin:0 0 12px;color:#dc2626;">Daily limit reached</h2>
-                            <p style="margin:0 0 8px;font-size:1.1rem;">You've used <b>${service.name}</b> ${count} times in the last 24 hours.</p>
-                            <p style="margin:0 0 20px;color:#475569;">Your daily allowance is <b>${dailyLimit}</b>. Try again in about <b>${hrsLeft} hours</b> (${minsLeft} min).</p>
-                            <p style="font-size:0.85rem;color:#64748b;">Need more? Contact your administrator.</p>
-                        </div>
-                    `);
-                }
-                // Below the limit. Record this hit, but only if we haven't
-                // counted one for this user+service inside the debounce window.
-                const key = `${verified.id}:${service.id}`;
-                const lastT = lastCountedUsage.get(key) || 0;
-                if (Date.now() - lastT >= USAGE_DEBOUNCE_MS) {
+                    // Allowed and recorded.
                     lastCountedUsage.set(key, Date.now());
-                    // Best-effort, don't block the proxy if this insert fails.
-                    recordUsage(verified.id, service.id).catch(e => {
-                        console.error('[Usage] record failed:', e.message);
-                    });
+
                     // Notify admins for the live usage view.
                     io.to('admins').emit('usage_recorded', {
                         user_id: verified.id, service_id: service.id, ts: Date.now()
@@ -527,11 +529,12 @@ app.use(async (req, res, next) => {
                     io.to(`user_${verified.id}`).emit('usage_recorded', {
                         user_id: verified.id, service_id: service.id, ts: Date.now()
                     });
+                } catch (e) {
+                    // If the gate itself errored, fail OPEN with a log line.
+                    // Better to occasionally let one through than break the
+                    // service entirely.
+                    console.error('[Usage] gate failed:', e.message);
                 }
-            } catch (e) {
-                // If the counter itself errored, do NOT block the user. Better
-                // to skip enforcement than break the service entirely.
-                console.error('[Usage] limit check failed:', e.message);
             }
         }
 

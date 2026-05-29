@@ -49,11 +49,36 @@ router.post('/services', async (req, res) => {
 router.put('/services/:id', async (req, res) => {
     const { name, target_url, icon_svg, text_svg, injection_js, amember_product_id, daily_limit } = req.body;
     const slug = (req.body.slug || '').trim();
-    const dl = (daily_limit === '' || daily_limit == null) ? null : parseInt(daily_limit, 10);
+
+    // SAFETY: only overwrite daily_limit when the client explicitly sends it.
+    // Treat "field omitted" and "field is empty string" differently:
+    //   - omitted   (undefined): keep the existing value (so accidental edits
+    //                            of other fields don't wipe the cap).
+    //   - empty ""  (explicit clear): set to NULL (= unlimited).
+    //   - number    (set/change):     parseInt, must be > 0.
+    let dlSql = '';
+    let dlParam = null;
+    if (Object.prototype.hasOwnProperty.call(req.body, 'daily_limit')) {
+        if (daily_limit === '' || daily_limit === null) {
+            dlSql = ', daily_limit = NULL';
+        } else {
+            const n = parseInt(daily_limit, 10);
+            if (Number.isFinite(n) && n > 0) {
+                dlSql = ', daily_limit = ?';
+                dlParam = n;
+            } else {
+                dlSql = ', daily_limit = NULL';
+            }
+        }
+    }
+
     try {
-        await run(`UPDATE services SET name = ?, slug = ?, target_url = ?, icon_svg = ?, text_svg = ?, injection_js = ?, amember_product_id = ?, daily_limit = ? 
-                   WHERE id = ?`, 
-                   [name, slug, target_url, icon_svg, text_svg, injection_js, amember_product_id, Number.isFinite(dl) && dl > 0 ? dl : null, req.params.id]);
+        const params = [name, slug, target_url, icon_svg, text_svg, injection_js, amember_product_id];
+        let sql = `UPDATE services SET name = ?, slug = ?, target_url = ?, icon_svg = ?, text_svg = ?, injection_js = ?, amember_product_id = ?${dlSql} WHERE id = ?`;
+        if (dlParam !== null) params.push(dlParam);
+        params.push(req.params.id);
+
+        await run(sql, params);
         res.json({ message: 'Service updated' });
     } catch(e) { res.status(500).json({ error: 'Database error: ' + e.message }); }
 });

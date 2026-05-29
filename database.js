@@ -416,4 +416,76 @@ const recordUsage = (userId, serviceId) => {
     });
 };
 
-module.exports = { db, query, run, get, pickLeastLoadedCookie, countRecentUsage, recordUsage, USAGE_WINDOW_MS };
+/**
+ * Atomic check-and-record for the daily cap. Counts a user's usage rows in
+ * the last 24h and either records a new row (if under the cap) or refuses
+ * (if at/over the cap). Both operations happen inside a single
+ * BEGIN IMMEDIATE transaction so two concurrent requests can't both see
+ * "5 used" and both record a 6th. SQLite serializes BEGIN IMMEDIATE.
+ *
+ * Returns:
+ *   { allowed: true,  used: <new count incl. this one>, oldest: <ts> }   when recorded
+ *   { allowed: false, used: <count>, oldest: <ts>, resetAt: <ts> }       when at cap
+ */
+const checkAndRecordUsage = (userId, serviceId, dailyLimit) => {
+    return new Promise((resolve, reject) => {
+        if (!dailyLimit || dailyLimit <= 0) {
+            // No cap configured — never block.
+            return resolve({ allowed: true, used: 0, oldest: null });
+        }
+        const since = Date.now() - USAGE_WINDOW_MS;
+
+        db.serialize(() => {
+            db.run('BEGIN IMMEDIATE TRANSACTION', (err) => {
+                if (err) return reject(err);
+
+                db.get(
+                    'SELECT COUNT(*) AS cnt, MIN(used_at) AS oldest FROM service_usage WHERE user_id = ? AND service_id = ? AND used_at >= ?',
+                    [userId, serviceId, since],
+                    (err2, row) => {
+                        if (err2) {
+                            db.run('ROLLBACK', () => reject(err2));
+                            return;
+                        }
+                        const count = (row && row.cnt) || 0;
+                        const oldest = (row && row.oldest) || null;
+
+                        if (count >= dailyLimit) {
+                            db.run('COMMIT', (commitErr) => {
+                                if (commitErr) return reject(commitErr);
+                                resolve({
+                                    allowed: false,
+                                    used: count,
+                                    oldest,
+                                    resetAt: (oldest || Date.now()) + USAGE_WINDOW_MS
+                                });
+                            });
+                            return;
+                        }
+
+                        db.run(
+                            'INSERT INTO service_usage (user_id, service_id, used_at) VALUES (?, ?, ?)',
+                            [userId, serviceId, Date.now()],
+                            (insertErr) => {
+                                if (insertErr) {
+                                    db.run('ROLLBACK', () => reject(insertErr));
+                                    return;
+                                }
+                                db.run('COMMIT', (commitErr) => {
+                                    if (commitErr) return reject(commitErr);
+                                    resolve({
+                                        allowed: true,
+                                        used: count + 1,
+                                        oldest: oldest || Date.now()
+                                    });
+                                });
+                            }
+                        );
+                    }
+                );
+            });
+        });
+    });
+};
+
+module.exports = { db, query, run, get, pickLeastLoadedCookie, countRecentUsage, recordUsage, checkAndRecordUsage, USAGE_WINDOW_MS };
