@@ -380,6 +380,27 @@ app.use(async (req, res, next) => {
 
     // --- 1. Identify Service (God Mode: Slug -> Referer -> Cookie -> IP Sticky) ---
     const realIp = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.ip;
+
+    // ---- Path-duplication collapse ----
+    // Some target sites (e.g. WriteHuman) use bare absolute paths like
+    // <a href="/dashboard"> in their HTML. The browser resolves those against
+    // the iframe's current URL — which is already /proxy/<slug>/ — so it
+    // produces /proxy/<slug>/proxy/<slug>/dashboard, then on the next click
+    // /proxy/<slug>/proxy/<slug>/proxy/<slug>/dashboard, etc. The path keeps
+    // growing recursively and every request becomes invalid.
+    //
+    // Collapse repeated /proxy/<slug>/ prefixes back to a single one. This
+    // is a no-op for normal traffic; the pattern only ever appears when the
+    // browser has resolved a base-relative link inside an already-proxied page.
+    const dupRe = /^(\/proxy\/[^\/]+\/)(?:\/?proxy\/[^\/]+\/)+/;
+    if (dupRe.test(req.url)) {
+        const fixed = req.url.replace(dupRe, '$1');
+        console.log(`[Proxy] Collapsing recursive proxy path: ${req.url.slice(0, 100)}... -> ${fixed.slice(0, 100)}`);
+        // Issue a redirect so the browser updates its URL bar / referer chain.
+        // 308 preserves the method (works for POSTs too).
+        return res.redirect(308, fixed);
+    }
+
     const proxyMatch = req.url.match(/^\/proxy\/([^\/]+)(\/.*)?$/);
     const refererMatch = req.headers.referer?.match(/\/proxy\/([^\/]+)/);
     const sessionMatch = req.cookies?.stealth_proxy_last_slug || getStickyService(realIp);
@@ -1290,6 +1311,26 @@ proxy.on('proxyRes', (proxyRes, req, res) => {
                     return origXhrSend.apply(this, arguments);
                 };
                 console.log('[Hub] Pathname cloaking active. Prefix:', proxyPrefix);
+
+                // Link click interceptor: catch <a href="/path"> clicks before
+                // the browser navigates and rewrite the URL to /proxy/<slug>/path.
+                // Without this, sites that use bare absolute paths in their
+                // anchor tags (like WriteHuman) cause recursive path growth
+                // because the browser resolves "/path" against the current
+                // iframe URL which is already /proxy/<slug>/.
+                document.addEventListener('click', function(ev){
+                    var a = ev.target && (ev.target.closest ? ev.target.closest('a') : null);
+                    if (!a) return;
+                    var raw = a.getAttribute('href');
+                    if (!raw) return;
+                    // Only rewrite bare absolute paths starting with a single '/'.
+                    if (raw[0] !== '/' || raw[1] === '/') return;
+                    if (raw.indexOf(proxyPrefix) === 0) return;
+                    if (raw.indexOf('/cdn/') === 0 || raw.indexOf('/cdn-cgi/') === 0) return;
+                    // Skip if it's already a full proxy URL.
+                    var fixed = proxyPrefix + raw;
+                    a.setAttribute('href', fixed);
+                }, true);
             })();
             </script>
             `;
