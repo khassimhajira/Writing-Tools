@@ -466,78 +466,6 @@ app.use(async (req, res, next) => {
         const dailyLimit = service.daily_limit ? parseInt(service.daily_limit, 10) : 0;
         const isWriteRequest = req.method === 'POST' || req.method === 'PUT';
 
-        // ===== TEMP: probe billable distinction (will be removed) =====
-        // For POSTs to /api/humanize on a limited service, buffer the body so
-        // we can both (a) inspect its shape to learn the distinction, and
-        // (b) make a robust decision based on real fields. Only enabled when
-        // dailyLimit is set, so it has zero effect on services without a cap.
-        let probedBody = null;
-        if (dailyLimit > 0 && isWriteRequest && /\/api\/humanize/i.test(req.url || '')) {
-            try {
-                probedBody = await new Promise((resolve, reject) => {
-                    const chunks = [];
-                    let total = 0;
-                    const MAX = 256 * 1024; // safety cap: 256 KB
-                    let timedOut = false;
-                    const timer = setTimeout(() => { timedOut = true; resolve(null); }, 4000);
-                    req.on('data', (c) => {
-                        if (timedOut) return;
-                        total += c.length;
-                        if (total > MAX) return; // skip oversized
-                        chunks.push(c);
-                    });
-                    req.on('end', () => {
-                        clearTimeout(timer);
-                        if (timedOut) return;
-                        const raw = Buffer.concat(chunks);
-                        let parsed = null, keys = [];
-                        try {
-                            const text = raw.toString('utf8');
-                            const obj = JSON.parse(text);
-                            parsed = obj;
-                            keys = Object.keys(obj);
-                        } catch(_) {}
-                        resolve({ raw, size: total, keys, parsed });
-                    });
-                    req.on('error', () => { clearTimeout(timer); resolve(null); });
-                });
-                if (probedBody) {
-                    // Log the distinguishing fields so we can build a precise rule.
-                    const sample = {};
-                    if (probedBody.parsed && typeof probedBody.parsed === 'object') {
-                        for (const k of probedBody.keys) {
-                            const v = probedBody.parsed[k];
-                            if (typeof v === 'string') {
-                                sample[k] = v.length > 60 ? `<string len=${v.length}>` : v;
-                            } else if (typeof v === 'number' || typeof v === 'boolean') {
-                                sample[k] = v;
-                            } else if (Array.isArray(v)) {
-                                sample[k] = `<array len=${v.length}>`;
-                            } else if (v == null) {
-                                sample[k] = null;
-                            } else {
-                                sample[k] = `<${typeof v}>`;
-                            }
-                        }
-                    }
-                    console.log(`[Usage Probe] ${req.method} ${req.url} size=${probedBody.size} keys=${JSON.stringify(probedBody.keys)} sample=${JSON.stringify(sample)}`);
-
-                    // Re-attach the buffered body to the request stream so
-                    // downstream proxy code can still forward it.
-                    const { Readable } = require('stream');
-                    const newStream = Readable.from(probedBody.raw);
-                    // Replace req's read methods with the new stream's.
-                    // Easiest way: pass the buffer as the body for the
-                    // downstream request via a flag the proxy code reads.
-                    req._hubBufferedBody = probedBody.raw;
-                    req.headers['content-length'] = String(probedBody.raw.length);
-                }
-            } catch (e) {
-                console.error('[Usage Probe] body read failed:', e.message);
-            }
-        }
-        // ===== END TEMP =====
-
         // Heuristic for what counts as a "real" billable action vs. UI noise
         // like "refresh alternatives" / synonym lookup / autosave / telemetry.
         //
@@ -762,13 +690,7 @@ app.use(async (req, res, next) => {
 
                 // Only pipe the request stream for methods that can have a body
                 if (req.method !== 'GET' && req.method !== 'HEAD') {
-                    // If we already buffered the body during the usage probe,
-                    // pass that buffer instead of the (consumed) stream.
-                    if (req._hubBufferedBody) {
-                        axiosConfig.data = req._hubBufferedBody;
-                    } else {
-                        axiosConfig.data = req;
-                    }
+                    axiosConfig.data = req;
                 }
 
                 const response = await axios(axiosConfig);
@@ -1569,19 +1491,6 @@ proxy.on('proxyReq', (proxyReq, req, res, options) => {
 
             console.log(`[Proxy Outbound] ${req.method} -> ${req.targetUrl}`);
         } catch(e) {}
-    }
-
-    // If we buffered the body during the usage probe, write it back to the
-    // proxied request now — http-proxy can't read req's stream because we
-    // already consumed it.
-    if (req._hubBufferedBody && (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH')) {
-        try {
-            proxyReq.setHeader('Content-Length', Buffer.byteLength(req._hubBufferedBody));
-            proxyReq.write(req._hubBufferedBody);
-            proxyReq.end();
-        } catch(e) {
-            console.error('[Usage Probe] proxyReq replay failed:', e.message);
-        }
     }
 });
 
