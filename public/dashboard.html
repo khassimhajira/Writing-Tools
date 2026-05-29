@@ -94,28 +94,11 @@
             margin-top: 4px; font-size: 0.72rem; color: #475569;
         }
         #portal-usage .pu-reset b { color: #0f172a; font-weight: 700; }
-        /* Dark-mode adaptation when StealthWriter (or whichever service) is in dark mode.
-           We default to the light card; users in pure dark themes will see this still
-           reads cleanly because StealthWriter's surrounding chrome is also light. */
-        [data-theme="dark"] #portal-usage {
-            background: #1f2937;
-            color: #f1f5f9;
-            border-color: rgba(255,255,255,0.08);
-            box-shadow:
-                0 1px 2px rgba(0,0,0,0.25),
-                0 10px 30px rgba(0,0,0,0.35);
-        }
-        [data-theme="dark"] #portal-usage .pu-label { color: #94a3b8; }
-        [data-theme="dark"] #portal-usage.is-warn .pu-label { color: #fbbf24; }
-        [data-theme="dark"] #portal-usage.is-crit .pu-label { color: #fca5a5; }
-        [data-theme="dark"] #portal-usage .pu-num { color: #ffffff; }
-        [data-theme="dark"] #portal-usage .pu-num small { color: #64748b; }
-        [data-theme="dark"] #portal-usage.is-crit .pu-num { color: #fca5a5; }
-        [data-theme="dark"] #portal-usage .pu-bar { background: rgba(255,255,255,0.08); }
-        [data-theme="dark"] #portal-usage .pu-foot { color: #94a3b8; }
-        [data-theme="dark"] #portal-usage .pu-foot .pu-svc { color: #64748b; }
-        [data-theme="dark"] #portal-usage .pu-reset { color: #cbd5e1; }
-        [data-theme="dark"] #portal-usage .pu-reset b { color: #fff; }
+        /* Note: we intentionally keep the pill light in BOTH dashboard themes,
+           because the visible context behind it is the StealthWriter (or other
+           service) interior — which is white. Matching that, not the dashboard
+           chrome (which is hidden when the iframe is open), gives a seamless
+           look. */
 
         @media (max-width: 600px) {
             #portal-usage {
