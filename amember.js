@@ -2,7 +2,14 @@ const mysql = require('mysql2/promise');
 const bcrypt = require('bcryptjs');
 
 const amemberConfig = {
-    host: process.env.AMEMBER_DB_HOST || 'localhost',
+    // Force IPv4 when localhost is configured. MySQL grants on Hostinger
+    // are typically for 127.0.0.1, but Node's mysql2 resolves "localhost"
+    // to ::1 (IPv6) on some Node versions, which then fails with
+    // "Access denied for user 'X'@'::1'". Using 127.0.0.1 explicitly avoids
+    // that whole class of problem.
+    host: (process.env.AMEMBER_DB_HOST === 'localhost' || !process.env.AMEMBER_DB_HOST)
+            ? '127.0.0.1'
+            : process.env.AMEMBER_DB_HOST,
     user: process.env.AMEMBER_DB_USER,
     password: process.env.AMEMBER_DB_PASS,
     database: process.env.AMEMBER_DB_NAME,

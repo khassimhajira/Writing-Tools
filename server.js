@@ -3,20 +3,39 @@ require('dotenv').config();
 // can pre-seed env vars (e.g. JWT_SECRET from an old hpanel config) which
 // silently win over our .env file. We explicitly read .env and OVERWRITE
 // matching keys so the file is the source of truth.
-try {
+//
+// We try a list of candidate paths in priority order:
+//   1. ~/stealth_data/.env  — persistent, survives Hostinger deploys
+//   2. ./.env               — in-app, normal default
+// The first one that exists wins. If both exist, persistent overrides
+// in-app (last-write-wins via the loop below).
+(function loadEnvFiles() {
     const fs = require('fs');
-    const envPath = require('path').join(__dirname, '.env');
-    const raw = fs.readFileSync(envPath, 'utf8');
-    raw.split(/\r?\n/).forEach(line => {
-        const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)$/i);
-        if (!m) return;
-        let v = m[2];
-        if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
-            v = v.slice(1, -1);
-        }
-        process.env[m[1]] = v; // FORCE override
-    });
-} catch (e) { console.error('[server.js] manual .env load failed:', e.message); }
+    const path = require('path');
+    const os = require('os');
+    const home = process.env.HOME || os.homedir() || '';
+    const candidates = [
+        path.join(__dirname, '.env'),
+        home ? path.join(home, 'stealth_data', '.env') : null
+    ].filter(Boolean);
+
+    for (const envPath of candidates) {
+        try {
+            if (!fs.existsSync(envPath)) continue;
+            const raw = fs.readFileSync(envPath, 'utf8');
+            raw.split(/\r?\n/).forEach(line => {
+                const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)$/i);
+                if (!m) return;
+                let v = m[2];
+                if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+                    v = v.slice(1, -1);
+                }
+                process.env[m[1]] = v; // FORCE override
+            });
+            console.log('[server.js] loaded env from', envPath);
+        } catch (e) { console.error('[server.js] env load failed for', envPath, ':', e.message); }
+    }
+})();
 
 // Global Fatal Error Logger
 process.on('uncaughtException', (err) => {

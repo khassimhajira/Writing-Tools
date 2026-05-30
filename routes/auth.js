@@ -1,26 +1,33 @@
 require('dotenv').config();
-// Belt-and-braces override. Under Hostinger Passenger, the parent process
-// can pre-seed env vars (e.g. JWT_SECRET from an old hpanel config) which
-// silently win over our .env file. We explicitly read .env and OVERWRITE
-// any matching keys in process.env so the file is the source of truth.
-try {
+// Same belt-and-braces .env loader as server.js — try persistent location
+// first, then in-app fallback. Last-write-wins so persistent values
+// override anything that's in the in-app file.
+(function loadEnvFiles() {
     const fs = require('fs');
-    const envPath = require('path').join(__dirname, '..', '.env');
-    const raw = fs.readFileSync(envPath, 'utf8');
-    raw.split(/\r?\n/).forEach(line => {
-        const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)$/i);
-        if (!m) return;
-        let v = m[2];
-        if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
-            v = v.slice(1, -1);
-        }
-        // OVERRIDE — file wins over inherited env. Only touches keys that
-        // appear in the file, so unrelated process env stays untouched.
-        process.env[m[1]] = v;
-    });
-} catch (e) {
-    console.error('[auth.js] manual .env load failed:', e.message);
-}
+    const path = require('path');
+    const os = require('os');
+    const home = process.env.HOME || os.homedir() || '';
+    const candidates = [
+        path.join(__dirname, '..', '.env'),
+        home ? path.join(home, 'stealth_data', '.env') : null
+    ].filter(Boolean);
+
+    for (const envPath of candidates) {
+        try {
+            if (!fs.existsSync(envPath)) continue;
+            const raw = fs.readFileSync(envPath, 'utf8');
+            raw.split(/\r?\n/).forEach(line => {
+                const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)$/i);
+                if (!m) return;
+                let v = m[2];
+                if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+                    v = v.slice(1, -1);
+                }
+                process.env[m[1]] = v;
+            });
+        } catch (e) { console.error('[auth.js] env load failed for', envPath, ':', e.message); }
+    }
+})();
 const express = require('express');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
