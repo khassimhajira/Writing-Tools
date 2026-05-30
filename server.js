@@ -1162,8 +1162,10 @@ app.use(async (req, res, next) => {
                     }
 
                     // 2. JS Redirection in HTML
-                    html = html.replace(/window\.location/g, 'globalThis.__HL__');
-                    html = html.replace(/document\.location/g, 'globalThis.__HL__');
+                    // Word-bounded so we don't mangle identifiers like
+                    // `window.locationInfo`, `document.locationHandler`, etc.
+                    html = html.replace(/window\.location\b/g, 'globalThis.__HL__');
+                    html = html.replace(/document\.location\b/g, 'globalThis.__HL__');
 
                     // 3. Domain Rewriting
                     const ownDomainRegex = new RegExp(`(https?:)?//([a-zA-Z0-9.-]*\\.)?${targetDomain.replace(/\./g, '\\.')}`, 'g');
@@ -1186,8 +1188,10 @@ app.use(async (req, res, next) => {
 
                     if (needsRewrite) {
                         // MINIMAL SURGERY: Only replace the two unambiguous browser location accessors.
-                        js = js.replace(/window\.location/g, 'globalThis.__HL__');
-                        js = js.replace(/document\.location/g, 'globalThis.__HL__');
+                        // Word-bounded so identifiers like `window.locationBar`,
+                        // `document.locationBar` etc. are not mangled.
+                        js = js.replace(/window\.location\b/g, 'globalThis.__HL__');
+                        js = js.replace(/document\.location\b/g, 'globalThis.__HL__');
 
                         // Domain Rewriting in JS (CRITICAL: catches hardcoded absolute API URLs)
                         const ownDomainRegex = new RegExp(`(https?:)?//([a-zA-Z0-9.-]*\\.)?${targetDomain.replace(/\./g, '\\.')}`, 'g');
