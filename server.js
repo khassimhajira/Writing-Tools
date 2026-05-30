@@ -762,15 +762,29 @@ app.use(async (req, res, next) => {
     try {
         const verified = jwt.verify(token, JWT_SECRET);
 
-        // Single-session enforcement at the proxy layer too. If this token's
-        // session_id no longer matches the DB (another device took over),
-        // refuse the proxied request and clear the cookie so the user
-        // gets bounced to login on the next page navigation.
+        // Single-session + idle-timeout enforcement at the proxy layer.
+        // We do this before any service work because:
+        //   1. KICKED — different device logged in: refuse and clear cookie.
+        //   2. IDLE_TIMEOUT — last activity older than threshold: same.
+        // Without these checks a stale tab could keep using proxied tools
+        // long after the user was supposed to be logged out.
         try {
             const dbUser = await get('SELECT session_id FROM users WHERE id = ?', [verified.id]);
             if (dbUser && dbUser.session_id && verified.sid && dbUser.session_id !== verified.sid) {
                 res.clearCookie('stealth_hub_token');
                 return res.status(401).send('<div style="font-family:sans-serif;text-align:center;margin-top:18%;padding:20px;color:#0f172a;"><h2 style="color:#7c3aed;margin:0 0 10px;">Session Ended</h2><p style="color:#475569;">You signed in on another device. Please log in again to continue.</p><p style="margin-top:20px;"><a href="/dashboard" style="color:#7c3aed;font-weight:600;text-decoration:none;">Return to login &rarr;</a></p></div>');
+            }
+            // Idle timeout check.
+            if (verified.sid) {
+                const snap = await get('SELECT last_active FROM user_sessions WHERE user_id = ?', [verified.id]);
+                const idleMin = parseInt(process.env.IDLE_TIMEOUT_MIN || '5', 10);
+                const idleMs = idleMin * 60 * 1000;
+                if (snap && snap.last_active && (Date.now() - Number(snap.last_active)) > idleMs) {
+                    await run('UPDATE users SET session_id = NULL WHERE id = ?', [verified.id]);
+                    await run('DELETE FROM user_sessions WHERE user_id = ?', [verified.id]);
+                    res.clearCookie('stealth_hub_token');
+                    return res.status(401).send('<div style="font-family:sans-serif;text-align:center;margin-top:18%;padding:20px;color:#0f172a;"><h2 style="color:#7c3aed;margin:0 0 10px;">Session timed out</h2><p style="color:#475569;">You were inactive for too long. Please log in again to continue.</p><p style="margin-top:20px;"><a href="/dashboard" style="color:#7c3aed;font-weight:600;text-decoration:none;">Return to login &rarr;</a></p></div>');
+                }
             }
         } catch (_) { /* fall through — best-effort check */ }
 

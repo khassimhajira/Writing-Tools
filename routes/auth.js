@@ -71,6 +71,14 @@ const JWT_EXPIRY = process.env.JWT_EXPIRY || '7d';
 const TURNSTILE_SECRET = process.env.TURNSTILE_SECRET_KEY || '';
 const TURNSTILE_SITE_KEY = process.env.TURNSTILE_SITE_KEY || '';
 
+// --- IDLE TIMEOUT ---
+// If the user is inactive for this many minutes, the session expires and
+// they're auto-logged out. "Active" means real user input (clicks, key
+// presses, scrolling) — background polling does NOT keep the session
+// alive. Configurable via .env (default 5 minutes).
+const IDLE_TIMEOUT_MIN = parseInt(process.env.IDLE_TIMEOUT_MIN || '5', 10);
+const IDLE_TIMEOUT_MS = IDLE_TIMEOUT_MIN * 60 * 1000;
+
 // --- helpers ---
 function getClientIp(req) {
     // Cloudflare puts the real visitor IP in CF-Connecting-IP. When the
@@ -206,11 +214,15 @@ async function verifyTurnstile(token, ip) {
 }
 
 // Public config endpoint so the login page can read whether Turnstile is on
-// and which site key to render with.
+// and which site key to render with. Also exposes the idle-timeout so the
+// client can run its activity tracker with the same threshold the server
+// enforces.
 router.get('/config', (req, res) => {
     res.json({
         turnstile_enabled: !!TURNSTILE_SECRET,
-        turnstile_site_key: TURNSTILE_SITE_KEY || null
+        turnstile_site_key: TURNSTILE_SITE_KEY || null,
+        idle_timeout_ms: IDLE_TIMEOUT_MS,
+        idle_warning_ms: 30 * 1000 // show warning modal 30s before logout
     });
 });
 
@@ -398,21 +410,42 @@ router.get('/logout', async (req, res) => {
 
 // Verify a JWT AND that its session_id still matches the DB. Returns
 // the user row on success, throws on failure (caller handles the response).
+//
+// Three reasons to fail:
+//   1. NO_USER     — user row gone
+//   2. BLOCKED     — admin marked the account blocked
+//   3. KICKED      — different device logged in as this user
+//   4. IDLE_TIMEOUT — last activity older than IDLE_TIMEOUT_MS
 async function verifyAndCheckSession(token) {
     const verified = jwt.verify(token, JWT_SECRET);
     const user = await get('SELECT id, username, email, role, status, session_id FROM users WHERE id = ?', [verified.id]);
     if (!user) { const e = new Error('User not found'); e.code = 'NO_USER'; throw e; }
     if (user.status === 'blocked') { const e = new Error('Account suspended'); e.code = 'BLOCKED'; throw e; }
-    // Session enforcement: if the user has a session_id in DB and it doesn't
-    // match the JWT, this token belongs to a kicked device. Reject.
     if (user.session_id && verified.sid && user.session_id !== verified.sid) {
         const e = new Error('Session ended on another device.');
         e.code = 'KICKED';
         throw e;
     }
-    // Tokens issued before the session_id field was added (no `sid` claim)
-    // are tolerated for backward compat — they'll be replaced on the user's
-    // next login. New issuances always carry sid.
+
+    // Idle timeout. We only enforce when we have a session snapshot to
+    // compare against — older tokens issued before user_sessions was
+    // populated are tolerated until the user's next login.
+    if (verified.sid) {
+        const snap = await get('SELECT last_active FROM user_sessions WHERE user_id = ?', [user.id]);
+        if (snap && snap.last_active) {
+            const idleMs = Date.now() - Number(snap.last_active);
+            if (idleMs > IDLE_TIMEOUT_MS) {
+                // Burn the session so the kicked-by-other-device flow on the
+                // user's NEXT login doesn't surface this stale snapshot.
+                await run('UPDATE users SET session_id = NULL WHERE id = ?', [user.id]);
+                await run('DELETE FROM user_sessions WHERE user_id = ?', [user.id]);
+                const e = new Error('Session timed out due to inactivity.');
+                e.code = 'IDLE_TIMEOUT';
+                throw e;
+            }
+        }
+    }
+
     return { verified, user };
 }
 
@@ -425,7 +458,39 @@ router.get('/me', async (req, res) => {
         res.json({ id: user.id, username: user.username, email: user.email, role: user.role, status: user.status });
     } catch(e) {
         if (e.code === 'KICKED') return res.status(401).json({ error: 'Session ended on another device.', code: 'KICKED' });
+        if (e.code === 'IDLE_TIMEOUT') {
+            res.clearCookie('stealth_hub_token');
+            return res.status(401).json({ error: 'Session timed out due to inactivity.', code: 'IDLE_TIMEOUT' });
+        }
         if (e.code === 'BLOCKED') return res.status(403).json({ error: 'Account suspended' });
+        res.status(401).json({ error: 'Invalid token' });
+    }
+});
+
+// Activity heartbeat. The client posts to this endpoint when the user
+// has been ACTIVELY using the page within the last polling interval
+// (real input — clicks/keys/scroll/touch — not background timers).
+// We bump last_active so the idle-timeout window resets.
+//
+// Critical: we do NOT bump last_active inside verifyAndCheckSession
+// itself, because every authenticated request would silently extend
+// the session even when the user is idle. Heartbeat must be explicit.
+router.post('/heartbeat', async (req, res) => {
+    const token = req.cookies.stealth_hub_token;
+    if (!token) return res.status(401).json({ error: 'Not authenticated' });
+    try {
+        const { user } = await verifyAndCheckSession(token);
+        await run(
+            'UPDATE user_sessions SET last_active = ? WHERE user_id = ?',
+            [Date.now(), user.id]
+        );
+        res.json({ ok: true });
+    } catch(e) {
+        if (e.code === 'KICKED') return res.status(401).json({ error: 'Session ended on another device.', code: 'KICKED' });
+        if (e.code === 'IDLE_TIMEOUT') {
+            res.clearCookie('stealth_hub_token');
+            return res.status(401).json({ error: 'Session timed out due to inactivity.', code: 'IDLE_TIMEOUT' });
+        }
         res.status(401).json({ error: 'Invalid token' });
     }
 });
@@ -490,6 +555,10 @@ router.get('/services', async (req, res) => {
         res.json(services);
     } catch(e) {
         if (e.code === 'KICKED') return res.status(401).json({ error: 'Session ended on another device.', code: 'KICKED' });
+        if (e.code === 'IDLE_TIMEOUT') {
+            res.clearCookie('stealth_hub_token');
+            return res.status(401).json({ error: 'Session timed out due to inactivity.', code: 'IDLE_TIMEOUT' });
+        }
         console.error('Error fetching user services:', e);
         res.status(500).json({ error: 'Database error' });
     }
@@ -605,6 +674,10 @@ router.get('/my-usage/:slug', async (req, res) => {
         });
     } catch(e) {
         if (e.code === 'KICKED') return res.status(401).json({ error: 'Session ended on another device.', code: 'KICKED' });
+        if (e.code === 'IDLE_TIMEOUT') {
+            res.clearCookie('stealth_hub_token');
+            return res.status(401).json({ error: 'Session timed out due to inactivity.', code: 'IDLE_TIMEOUT' });
+        }
         console.error('my-usage error:', e);
         res.status(401).json({ error: 'Invalid token' });
     }

@@ -186,6 +186,7 @@
     <div id="portal-usage" style="display:none;"></div>
 
     <script src="/socket.io/socket.io.js"></script>
+    <script src="/idle-tracker.js"></script>
     <script>
         const socket = io();
         let currentUser = null;
@@ -599,6 +600,7 @@
                     let body = null;
                     try { body = await r.json(); } catch (_) {}
                     if (body && body.code === 'KICKED') showKickedAndBounce();
+                    else if (body && body.code === 'IDLE_TIMEOUT' && window.HubIdle) window.HubIdle.showTimeoutPage();
                 }
             } catch (_) {}
         }
@@ -611,10 +613,19 @@
                     const clone = res.clone();
                     const j = await clone.json().catch(() => null);
                     if (j && j.code === 'KICKED') showKickedAndBounce();
+                    else if (j && j.code === 'IDLE_TIMEOUT' && window.HubIdle) window.HubIdle.showTimeoutPage();
                 }
             } catch (_) {}
             return res;
         };
+
+        // Boot the idle-timeout watcher (5-min default, configurable server-side).
+        // Real user input resets the timer; background polling does not.
+        if (window.HubIdle) {
+            window.HubIdle.start({
+                loginUrl: 'https://app.scholargenie.org/login?amember_redirect_url=https://app.scholargenie.org/content/p/id/1/'
+            });
+        }
     </script>
 </body>
 </html>

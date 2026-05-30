@@ -245,6 +245,7 @@
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
+    <script src="/idle-tracker.js"></script>
     <script>
         let socket = (typeof io !== 'undefined') ? io() : { on:()=>{}, emit:()=>{} };
         // Authenticate socket as admin for real-time updates
@@ -784,6 +785,7 @@
                     let body = null;
                     try { body = await r.json(); } catch (_) {}
                     if (body && body.code === 'KICKED') showKickedAndBounce();
+                    else if (body && body.code === 'IDLE_TIMEOUT' && window.HubIdle) window.HubIdle.showTimeoutPage();
                 }
             } catch (_) { /* network blip — try again next tick */ }
         }
@@ -797,10 +799,19 @@
                     const clone = res.clone();
                     const j = await clone.json().catch(() => null);
                     if (j && j.code === 'KICKED') showKickedAndBounce();
+                    else if (j && j.code === 'IDLE_TIMEOUT' && window.HubIdle) window.HubIdle.showTimeoutPage();
                 }
             } catch (_) {}
             return res;
         };
+
+        // Boot the idle-timeout watcher. After IDLE_TIMEOUT_MIN minutes of
+        // no real input (clicks/keys/scroll/touch), we show a 30-second
+        // warning modal; if dismissed, the page replaces itself with a
+        // "session timed out" notice and a re-login button.
+        if (window.HubIdle) {
+            window.HubIdle.start({ loginUrl: '/admin' });
+        }
         function initTheme() { const btn = document.getElementById('theme-btn'), cont = document.getElementById('theme-icon-container'), update = t => cont.innerHTML = (t === 'light' ? `Dark` : `Light`); btn.onclick = () => { const cur = document.documentElement.getAttribute('data-theme')||'dark', next = cur==='dark'?'light':'dark'; document.documentElement.setAttribute('data-theme', next); localStorage.setItem('admin-theme', next); update(next); }; const saved = localStorage.getItem('admin-theme')||'dark'; document.documentElement.setAttribute('data-theme', saved); update(saved); }
     </script>
 </body>

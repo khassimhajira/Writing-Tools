@@ -26,8 +26,19 @@ const isAdmin = async (req, res, next) => {
             if (dbUser.session_id && verified.sid && dbUser.session_id !== verified.sid) {
                 return res.status(401).json({ error: 'Session ended on another device.', code: 'KICKED' });
             }
+            // Idle timeout enforcement.
+            if (verified.sid) {
+                const snap = await get('SELECT last_active FROM user_sessions WHERE user_id = ?', [verified.id]);
+                const idleMin = parseInt(process.env.IDLE_TIMEOUT_MIN || '5', 10);
+                const idleMs = idleMin * 60 * 1000;
+                if (snap && snap.last_active && (Date.now() - Number(snap.last_active)) > idleMs) {
+                    await run('UPDATE users SET session_id = NULL WHERE id = ?', [verified.id]);
+                    await run('DELETE FROM user_sessions WHERE user_id = ?', [verified.id]);
+                    res.clearCookie('stealth_hub_token');
+                    return res.status(401).json({ error: 'Session timed out due to inactivity.', code: 'IDLE_TIMEOUT' });
+                }
+            }
         } catch (e) {
-            // If the DB check itself errors, fail closed — safer than letting a stale JWT through.
             console.error('isAdmin session check failed:', e.message);
             return res.status(500).json({ error: 'Auth check failed' });
         }
