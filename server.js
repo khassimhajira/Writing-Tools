@@ -876,6 +876,88 @@ app.use(async (req, res, next) => {
                     html = html.replace('<head>', `<head>${hijackScript}`);
                     if (service.injection_js) html = html.replace('</head>', `${service.injection_js}</head>`);
 
+                    // ---- Supabase localStorage bridge ----
+                    // Some sites (WriteHuman, possibly others) use Supabase
+                    // auth which stores its session in localStorage rather
+                    // than cookies. Cookies don't carry across domains, so
+                    // even with valid auth-token cookies the site looks
+                    // "logged out" inside our proxy. We read the auth-token
+                    // cookies from the cookie data we have for this user and
+                    // hand them to localStorage on the page before the
+                    // bundle runs.
+                    try {
+                        const cookieStr = req.userCookieData || '';
+                        if (cookieStr) {
+                            // Find any sb-<projectref>-auth-token cookies in
+                            // the user's cookie blob. Format on disk:
+                            //   sb-<ref>-auth-token.0=<base64-encoded-json-part1>
+                            //   sb-<ref>-auth-token.1=<base64-encoded-json-part2>
+                            // (or sometimes a single sb-<ref>-auth-token=<base64...>)
+                            // We collect all parts, then build the localStorage
+                            // payload Supabase expects (the decoded JSON, not
+                            // the base64 wrapper).
+                            const parts = cookieStr.split(';').map(c => c.trim());
+                            const sbKeys = {}; // projectRef -> { 0: '...', 1: '...' } or single
+                            const sbSimple = {}; // single-cookie variants
+                            parts.forEach(p => {
+                                const eq = p.indexOf('=');
+                                if (eq < 0) return;
+                                const name = p.substring(0, eq);
+                                const value = p.substring(eq + 1);
+                                const m = name.match(/^sb-([a-z0-9-]+)-auth-token(?:\\.([0-9]+))?$/i);
+                                if (!m) return;
+                                const ref = m[1];
+                                const idx = m[2];
+                                if (idx === undefined) {
+                                    sbSimple[ref] = value;
+                                } else {
+                                    if (!sbKeys[ref]) sbKeys[ref] = {};
+                                    sbKeys[ref][idx] = value;
+                                }
+                            });
+
+                            const items = []; // { storageKey, jsonString }
+                            for (const ref of Object.keys(sbKeys)) {
+                                // Concatenate parts in numeric order.
+                                const ordered = Object.keys(sbKeys[ref]).map(Number).sort((a,b)=>a-b)
+                                    .map(i => sbKeys[ref][i]).join('');
+                                // Strip optional "base64-" prefix Supabase uses.
+                                let raw = ordered;
+                                if (raw.startsWith('base64-')) raw = raw.substring(7);
+                                let decoded;
+                                try {
+                                    decoded = Buffer.from(raw, 'base64').toString('utf8');
+                                } catch (_) { continue; }
+                                // Validate it's JSON before injecting.
+                                try { JSON.parse(decoded); } catch (_) { continue; }
+                                items.push({ key: 'sb-' + ref + '-auth-token', json: decoded });
+                            }
+                            for (const ref of Object.keys(sbSimple)) {
+                                let raw = sbSimple[ref];
+                                if (raw.startsWith('base64-')) raw = raw.substring(7);
+                                let decoded;
+                                try {
+                                    decoded = Buffer.from(raw, 'base64').toString('utf8');
+                                } catch (_) { continue; }
+                                try { JSON.parse(decoded); } catch (_) { continue; }
+                                items.push({ key: 'sb-' + ref + '-auth-token', json: decoded });
+                            }
+
+                            if (items.length > 0) {
+                                // JSON-stringify the items so they survive
+                                // injection as inline JS literals safely.
+                                const payload = JSON.stringify(items);
+                                const sbBridge = '<script id="hub-sb-bridge">(function(){try{var items=' + payload + ';for(var i=0;i<items.length;i++){var it=items[i];try{localStorage.setItem(it.key,it.json);}catch(e){console.warn("[Hub-SB] set failed",e);}}}catch(e){console.warn("[Hub-SB] init failed",e);}})();</script>';
+                                // Inject IMMEDIATELY after <head> so it runs
+                                // before any of the site's own bundles.
+                                html = html.replace('<head>', '<head>' + sbBridge);
+                                console.log('[Hub-SB] Injected localStorage bridge for ' + items.length + ' Supabase ref(s) into ' + service.slug);
+                            }
+                        }
+                    } catch(e) {
+                        console.error('[Hub-SB] bridge failed:', e.message);
+                    }
+
                     // 2. JS Redirection in HTML
                     html = html.replace(/window\.location/g, 'globalThis.__HL__');
                     html = html.replace(/document\.location/g, 'globalThis.__HL__');
