@@ -205,17 +205,45 @@ async function verifyAmemberSession(session_id) {
 
     try {
         const prefix = amemberConfig.prefix;
-        // 1. Find the session in aMember DB
-        // aMember 6.x uses 'id' as the session column, not 'session_id'
+        // aMember 6.x stores active sessions in `<prefix>session` keyed by
+        // PHP's session id (the value of the PHPSESSID cookie). Columns:
+        //   id (char32) — PHPSESSID value
+        //   user_id (int, nullable) — set once the user authenticates
+        //   modified (int) — last update epoch
+        //   lifetime (int) — TTL seconds
+        //   data (mediumtext) — PHP-serialized auth payload
         const [sessions] = await pool.execute(
-            `SELECT user_id FROM ${prefix}session WHERE id = ? LIMIT 1`,
+            `SELECT user_id, modified, lifetime, data FROM ${prefix}session WHERE id = ? LIMIT 1`,
             [session_id]
         );
 
-        if (sessions.length === 0) return null;
-        const userId = sessions[0].user_id;
+        if (sessions.length === 0) {
+            console.log('[aMember Session Verify] no session row for id=' + session_id.slice(0, 8) + '...');
+            return null;
+        }
+        const sess = sessions[0];
 
-        // 2. Get user info and check active access
+        // Expiry check: modified + lifetime must be in the future.
+        if (sess.modified && sess.lifetime && (sess.modified + sess.lifetime) * 1000 < Date.now()) {
+            console.log('[aMember Session Verify] session expired');
+            return null;
+        }
+
+        // Resolve user_id from the column OR from the serialized data blob.
+        // When aMember authenticates, it sometimes writes user_id to the column
+        // and sometimes only into the PHP-serialized `data` payload.
+        let userId = sess.user_id;
+        if (!userId && sess.data) {
+            // Look for `s:7:"user_id";i:NN;` inside the serialized payload.
+            const m = String(sess.data).match(/s:7:"user_id";i:(\d+);/);
+            if (m) userId = parseInt(m[1], 10);
+        }
+        if (!userId) {
+            console.log('[aMember Session Verify] session present but no user_id (anonymous visitor)');
+            return null;
+        }
+
+        // 2. Confirm user has active access and grab their email/login.
         const [users] = await pool.execute(
             `SELECT u.email, u.login FROM ${prefix}user u
              JOIN ${prefix}access a ON u.user_id = a.user_id
@@ -224,7 +252,11 @@ async function verifyAmemberSession(session_id) {
             [userId]
         );
 
-        return users.length > 0 ? users[0] : null;
+        if (users.length === 0) {
+            console.log('[aMember Session Verify] user_id=' + userId + ' has no active access');
+            return null;
+        }
+        return users[0];
     } catch (e) {
         console.error('[aMember Session Verify] Error:', e.message);
         return null;

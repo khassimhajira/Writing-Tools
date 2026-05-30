@@ -408,8 +408,12 @@ router.get('/services', async (req, res) => {
 // IMPORTANT: this route only accepts the aMember session cookie. The
 // previous email/username query-string fallback was a master-key bypass
 // (anyone who knew an email could mint a token as that user) — removed.
+//
+// Cookie name: aMember 6.x uses standard PHPSESSID by default. Older
+// installations sometimes use amember_nr. We check both, in priority
+// order, so the route works across versions.
 router.get('/am-login', async (req, res) => {
-    const amemberSessionId = req.cookies.amember_nr;
+    const amemberSessionId = req.cookies.PHPSESSID || req.cookies.amember_nr;
     if (!amemberSessionId) {
         return res.status(401).send('Access Denied: please log in to aMember first.');
     }
