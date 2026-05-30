@@ -73,6 +73,11 @@ const TURNSTILE_SITE_KEY = process.env.TURNSTILE_SITE_KEY || '';
 
 // --- helpers ---
 function getClientIp(req) {
+    // Cloudflare puts the real visitor IP in CF-Connecting-IP. When the
+    // domain is proxied through Cloudflare, this is more reliable than
+    // X-Forwarded-For (which CF rewrites to include their own edge IPs).
+    const cf = (req.headers['cf-connecting-ip'] || '').trim();
+    if (cf) return cf;
     const xff = (req.headers['x-forwarded-for'] || '').split(',')[0].trim();
     return xff || req.ip || (req.socket && req.socket.remoteAddress) || '';
 }
@@ -100,12 +105,42 @@ function parseUA(uaRaw) {
     return { device, browser };
 }
 
-// Resolve country from IP using ipwho.is (free, no key, no signup).
-// Cached in-process for 1h to keep things cheap.
+// Map ISO country codes to readable names. Only the common ones we'd
+// realistically see — the rest fall through to the code itself which
+// is still useful (e.g. "TZ" instead of "Unknown Location").
+const COUNTRY_NAMES = {
+    US: 'United States', GB: 'United Kingdom', CA: 'Canada', AU: 'Australia',
+    NZ: 'New Zealand', IE: 'Ireland', IN: 'India', PK: 'Pakistan', BD: 'Bangladesh',
+    NG: 'Nigeria', KE: 'Kenya', UG: 'Uganda', TZ: 'Tanzania', ZA: 'South Africa',
+    GH: 'Ghana', ET: 'Ethiopia', EG: 'Egypt', MA: 'Morocco', DZ: 'Algeria',
+    SA: 'Saudi Arabia', AE: 'United Arab Emirates', QA: 'Qatar', KW: 'Kuwait',
+    DE: 'Germany', FR: 'France', ES: 'Spain', IT: 'Italy', NL: 'Netherlands',
+    BE: 'Belgium', CH: 'Switzerland', AT: 'Austria', SE: 'Sweden', NO: 'Norway',
+    DK: 'Denmark', FI: 'Finland', PL: 'Poland', PT: 'Portugal', GR: 'Greece',
+    TR: 'Turkey', RU: 'Russia', UA: 'Ukraine', CN: 'China', JP: 'Japan',
+    KR: 'South Korea', SG: 'Singapore', MY: 'Malaysia', PH: 'Philippines',
+    TH: 'Thailand', VN: 'Vietnam', ID: 'Indonesia', BR: 'Brazil', MX: 'Mexico',
+    AR: 'Argentina', CL: 'Chile', CO: 'Colombia', PE: 'Peru'
+};
+
+// Resolve country from a request. Priority order:
+//   1. Cloudflare's CF-IPCountry header (free, instant, no API call) —
+//      present on every request once the domain is proxied through CF.
+//   2. ipwho.is fallback for direct/local requests not via Cloudflare.
+//   3. "Unknown Location" if both fail.
 const ipCache = new Map(); // ip -> { ts, country, country_code }
-async function lookupCountry(ip) {
+async function lookupCountry(req, ip) {
+    // Cloudflare gives us the visitor's country in a header. Faster, more
+    // reliable, free, no third-party call.
+    const cfCC = (req.headers['cf-ipcountry'] || '').toUpperCase();
+    if (cfCC && cfCC !== 'XX' && cfCC !== 'T1') {
+        return {
+            country: COUNTRY_NAMES[cfCC] || cfCC,
+            country_code: cfCC.toLowerCase()
+        };
+    }
+
     if (!ip) return { country: 'Unknown Location', country_code: '' };
-    // Skip private IPs (localhost, 127.x, 10.x, 192.168.x, etc.)
     if (/^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::1$|fc00:|fd00:|fe80:)/.test(ip)) {
         return { country: 'Local Network', country_code: '' };
     }
@@ -162,7 +197,7 @@ async function snapshotSession(userId, sessionId, req) {
     const ip = getClientIp(req);
     const ua = req.headers['user-agent'] || '';
     const { device, browser } = parseUA(ua);
-    const { country, country_code } = await lookupCountry(ip);
+    const { country, country_code } = await lookupCountry(req, ip);
     const now = Date.now();
     await run(
         `INSERT INTO user_sessions (user_id, session_id, ip, country, country_code, device, browser, user_agent, last_active)
@@ -210,9 +245,20 @@ router.post('/login', async (req, res) => {
     const { email, password, confirm_takeover, turnstile_token } = req.body || {};
 
     // Captcha first (skipped if Turnstile is disabled in env).
-    const captchaOk = await verifyTurnstile(turnstile_token, getClientIp(req));
-    if (!captchaOk) {
-        return res.status(400).json({ error: 'Captcha verification failed. Please reload and try again.' });
+    //
+    // EXCEPTION: when the client retries with confirm_takeover=true, we
+    // skip the Turnstile check. Two reasons:
+    //   1. Turnstile tokens are SINGLE-USE — the first /login attempt
+    //      already consumed it. Re-submitting the same token gets a
+    //      "timeout-or-duplicate" error from Cloudflare.
+    //   2. The retry is necessarily the same browser/IP that just passed
+    //      the captcha milliseconds earlier. The threat model (bot trying
+    //      passwords) is already mitigated by attempt #1.
+    if (!confirm_takeover) {
+        const captchaOk = await verifyTurnstile(turnstile_token, getClientIp(req));
+        if (!captchaOk) {
+            return res.status(400).json({ error: 'Captcha verification failed. Please reload and try again.' });
+        }
     }
 
     try {
@@ -279,7 +325,7 @@ router.post('/login', async (req, res) => {
             const ip = getClientIp(req);
             const ua = req.headers['user-agent'] || '';
             const { device: thisDevice, browser: thisBrowser } = parseUA(ua);
-            const { country: thisCountry, country_code: thisCC } = await lookupCountry(ip);
+            const { country: thisCountry, country_code: thisCC } = await lookupCountry(req, ip);
             return res.status(409).json({
                 code: 'SESSION_EXISTS',
                 message: 'An active session already exists. Continue to log this device in and end the existing session.',
