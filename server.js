@@ -564,6 +564,19 @@ app.use(async (req, res, next) => {
         return res.status(200).json({});
     }
 
+    // --- BLOCK SENTRY TUNNELS ---
+    // Many Next.js apps (Grok, etc.) tunnel Sentry events through their own
+    // origin at /monitoring?o=...&p=...&r=... so they're not blocked by ad-blockers.
+    // We don't want those firing through our proxy: they 400 because the
+    // upstream tunnel route only accepts traffic from the real origin host,
+    // and they're noise. Return 204 immediately.
+    if (/^\/monitoring(\?|$)/.test(req.url) || /^\/api\/monitoring(\?|$)/.test(req.url)) {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', '*');
+        return res.status(204).end();
+    }
+
     // Don't proxy static assets or APIs of the hub itself
     const hubUIRoutes = ['/dashboard', '/dashboard/', '/admin', '/admin/', '/'];
     const isHubRoute = hubUIRoutes.includes(req.url) || 
@@ -1003,15 +1016,42 @@ app.use(async (req, res, next) => {
                             g.__HL__ = hubLocation;
 
                             // Close Remix/React Location Leaks
+                            //
+                            // CRITICAL: do NOT blindly .bind() every function we hand back.
+                            // Bound functions lose their OWN properties, so e.g.
+                            //   _.Object.getOwnPropertyDescriptor
+                            // becomes undefined because the bound Object function strips
+                            // away assign/keys/getOwnPropertyDescriptor/etc.
+                            // (This is what was breaking grok.com -- Sentry session-replay
+                            // hits exactly that pattern.)
+                            //
+                            // Strategy: for global namespaces / constructors with static
+                            // methods (Object, Array, JSON, Math, ...) return them
+                            // untouched. Only bind plain instance methods that need
+                            // their original receiver (addEventListener, setTimeout, etc.).
                             const realDefaultView = document.defaultView;
-                            Object.defineProperty(document, 'defaultView', {
-                                get: () => new Proxy(realDefaultView, {
-                                    get: (target, prop) => {
-                                        if (prop === 'location') return hubLocation;
-                                        let val = target[prop];
-                                        return typeof val === 'function' ? val.bind(target) : val;
+                            const __isPlainFn = (fn) => {
+                                try {
+                                    const own = Object.getOwnPropertyNames(fn);
+                                    // length / name / prototype = the 3 default props.
+                                    // Anything more means it is a constructor or namespace
+                                    // with static members we must NOT strip via .bind.
+                                    return own.length <= 3;
+                                } catch (_) { return false; }
+                            };
+                            const __dvProxy = new Proxy(realDefaultView, {
+                                get: (target, prop) => {
+                                    if (prop === 'location') return hubLocation;
+                                    const val = Reflect.get(target, prop, target);
+                                    if (typeof val !== 'function') return val;
+                                    if (__isPlainFn(val)) {
+                                        try { return val.bind(target); } catch (_) { return val; }
                                     }
-                                }),
+                                    return val;
+                                }
+                            });
+                            Object.defineProperty(document, 'defaultView', {
+                                get: () => __dvProxy,
                                 configurable: true
                             });
 
