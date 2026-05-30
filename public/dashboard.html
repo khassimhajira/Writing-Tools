@@ -243,6 +243,22 @@
         async function init() {
             try {
                 const userRes = await fetch('/hub/api/auth/me');
+                if (userRes.status === 401) {
+                    // Could be unauthenticated OR kicked from another device.
+                    let body = null;
+                    try { body = await userRes.json(); } catch (_) {}
+                    if (body && body.code === 'KICKED') {
+                        // Friendly notice, then bounce to login.
+                        document.body.innerHTML = '<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;text-align:center;padding:14% 20px;color:var(--text-primary,#0f172a);max-width:480px;margin:0 auto;">'
+                            + '<div style="font-size:48px;margin-bottom:12px;">&#128274;</div>'
+                            + '<h2 style="color:var(--pt-primary,#7C3AED);margin:0 0 8px;">Session ended</h2>'
+                            + '<p style="color:var(--text-secondary,#475569);margin:0 0 16px;line-height:1.5;">You signed in on another device. To use Scholar Genie here, log in again.</p>'
+                            + '<a href="https://app.scholargenie.org/login?amember_redirect_url=https://app.scholargenie.org/content/p/id/1/" '
+                            + 'style="display:inline-block;background:linear-gradient(135deg,var(--pt-primary,#7C3AED),var(--pt-mid,#8B5CF6));color:#fff;font-weight:700;padding:12px 22px;border-radius:12px;text-decoration:none;">Log in again &rarr;</a></div>';
+                        return;
+                    }
+                    throw new Error('Unauthenticated');
+                }
                 if (!userRes.ok) throw new Error();
                 currentUser = await userRes.json();
                 document.getElementById('user-pill').innerHTML = currentUser.username;

@@ -34,6 +34,8 @@
                     <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
                 </div>
             </div>
+            <!-- Cloudflare Turnstile placeholder. Renders only when keys are set in server .env. -->
+            <div data-hub-turnstile style="margin: 0 0 0.75rem;"></div>
             <button type="submit">Unlock Console</button>
         </form>
     </div>
@@ -74,18 +76,27 @@
             const password = document.getElementById('login-password').value;
 
             try {
-                const res = await fetch('/hub/api/auth/login', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ email, password })
-                });
-                const data = await res.json();
-                if (res.ok && data.user.role === 'admin') {
+                // Reuse the shared login flow which handles the single-session
+                // takeover modal + Turnstile token. Falls back to a basic POST
+                // if auth.js wasn't loaded for some reason.
+                let r;
+                if (window.__hubAuth && window.__hubAuth.performLogin) {
+                    r = await window.__hubAuth.performLogin(email, password);
+                    if (r.cancelled) { btn.disabled = false; btn.innerText = 'Unlock Console'; return; }
+                } else {
+                    const res = await fetch('/hub/api/auth/login', {
+                        method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ email, password })
+                    });
+                    r = { ok: res.ok, data: await res.json().catch(()=>({})), status: res.status };
+                }
+
+                if (r.ok && r.data.user && r.data.user.role === 'admin') {
                     window.location.href = '/admin';
                 } else {
                     const alert = document.getElementById('login-alert');
                     alert.className = 'alert alert-error';
-                    alert.innerText = data.error || 'Access Denied: Admin role required.';
+                    alert.innerText = (r.data && r.data.error) || 'Access Denied: Admin role required.';
                     alert.style.display = 'block';
                     btn.disabled = false; btn.innerText = 'Unlock Console';
                 }

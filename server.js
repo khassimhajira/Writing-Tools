@@ -1,4 +1,22 @@
 require('dotenv').config();
+// Belt-and-braces override. Under Hostinger Passenger, the parent process
+// can pre-seed env vars (e.g. JWT_SECRET from an old hpanel config) which
+// silently win over our .env file. We explicitly read .env and OVERWRITE
+// matching keys so the file is the source of truth.
+try {
+    const fs = require('fs');
+    const envPath = require('path').join(__dirname, '.env');
+    const raw = fs.readFileSync(envPath, 'utf8');
+    raw.split(/\r?\n/).forEach(line => {
+        const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)$/i);
+        if (!m) return;
+        let v = m[2];
+        if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+            v = v.slice(1, -1);
+        }
+        process.env[m[1]] = v; // FORCE override
+    });
+} catch (e) { console.error('[server.js] manual .env load failed:', e.message); }
 
 // Global Fatal Error Logger
 process.on('uncaughtException', (err) => {
@@ -22,8 +40,17 @@ const axios = require('axios');
 
 // MVC Modules
 const { get, run, query, db, pickLeastLoadedCookie, countRecentUsage, recordUsage, checkAndRecordUsage, USAGE_WINDOW_MS } = require('./database');
-const { router: authRouter, JWT_SECRET } = require('./routes/auth');
+const { router: authRouter, JWT_SECRET, verifyAndCheckSession } = require('./routes/auth');
 const adminRouter = require('./routes/admin');
+
+// Hard guard: refuse to start with a missing/weak JWT_SECRET. This used to
+// silently fall back to a hardcoded value in the public source — letting
+// anyone with the repo mint admin tokens. Set JWT_SECRET to a long random
+// string in your production .env.
+if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
+    console.error('FATAL: JWT_SECRET is missing or too short (<32 chars). Set it in .env and restart.');
+    process.exit(1);
+}
 
 const app = express();
 const server = http.createServer(app);
@@ -71,7 +98,7 @@ app.use(cookieParser());
 app.get('/', (req, res) => res.redirect('/dashboard'));
 
 // AUTH GATEKEEPER: All dashboard traffic must be authenticated via aMember
-app.get('/dashboard', (req, res) => {
+app.get('/dashboard', async (req, res) => {
     const token = req.cookies.stealth_hub_token;
     
     // If no token, redirect to aMember Login, but tell it to come back to the "Access Tools" page
@@ -82,9 +109,15 @@ app.get('/dashboard', (req, res) => {
     }
     
     try {
-        jwt.verify(token, JWT_SECRET);
+        // Single-session enforcement: if the JWT carries a session_id that
+        // no longer matches the DB (because another device logged in), bounce
+        // back to login. Without this check a kicked device could still
+        // access the dashboard until its tab is closed.
+        await verifyAndCheckSession(token);
         res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
     } catch(e) {
+        // Whether it's a bad token, expired, kicked, or blocked — bounce.
+        res.clearCookie('stealth_hub_token');
         res.redirect('https://app.scholargenie.org/login');
     }
 });
@@ -694,7 +727,19 @@ app.use(async (req, res, next) => {
 
     try {
         const verified = jwt.verify(token, JWT_SECRET);
-        
+
+        // Single-session enforcement at the proxy layer too. If this token's
+        // session_id no longer matches the DB (another device took over),
+        // refuse the proxied request and clear the cookie so the user
+        // gets bounced to login on the next page navigation.
+        try {
+            const dbUser = await get('SELECT session_id FROM users WHERE id = ?', [verified.id]);
+            if (dbUser && dbUser.session_id && verified.sid && dbUser.session_id !== verified.sid) {
+                res.clearCookie('stealth_hub_token');
+                return res.status(401).send('<div style="font-family:sans-serif;text-align:center;margin-top:18%;padding:20px;color:#0f172a;"><h2 style="color:#7c3aed;margin:0 0 10px;">Session Ended</h2><p style="color:#475569;">You signed in on another device. Please log in again to continue.</p><p style="margin-top:20px;"><a href="/dashboard" style="color:#7c3aed;font-weight:600;text-decoration:none;">Return to login &rarr;</a></p></div>');
+            }
+        } catch (_) { /* fall through — best-effort check */ }
+
         // Fetch Service & Assignment
         console.log(`[Proxy] Finding service for slug: ${serviceSlug}`);
         const service = await get('SELECT * FROM services WHERE slug = ?', [serviceSlug]);

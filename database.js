@@ -167,6 +167,26 @@ function initializeDB() {
         // NULL means "inherit the service's default daily_limit".
         db.run(`ALTER TABLE user_assignments ADD COLUMN daily_limit_override INTEGER`, (err) => {});
 
+        // Single-active-session enforcement. We stamp users.session_id at every
+        // login. The JWT carries the same session_id; verifications that don't
+        // match the DB are rejected. New login on another device kicks the old.
+        db.run(`ALTER TABLE users ADD COLUMN session_id TEXT`, (err) => {});
+
+        // Snapshot of the currently-active session per user, for the takeover
+        // confirmation modal. We keep just the latest row per user.
+        db.run(`CREATE TABLE IF NOT EXISTS user_sessions (
+            user_id INTEGER PRIMARY KEY,
+            session_id TEXT,
+            ip TEXT,
+            country TEXT,
+            country_code TEXT,
+            device TEXT,
+            browser TEXT,
+            user_agent TEXT,
+            last_active INTEGER,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        )`);
+
         // Service usage log: one row per "billable" proxy action (POST/PUT)
         // per user per service, used to enforce the rolling 24h limit.
         db.run(`CREATE TABLE IF NOT EXISTS service_usage (
