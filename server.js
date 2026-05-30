@@ -317,6 +317,46 @@ function buildSbBridgeScript(cookieStr) {
                     'return origSend.apply(this, arguments);' +
                 '};' +
                 'console.log(\"[Hub-SB] supabase fetch/XHR interceptor active for refs:\", Object.keys(byRef));' +
+
+                // Navigation guard: stop the redirect loop without breaking
+                // intentional navigation. We allow nav only if explicitly
+                // triggered by a user click (event in flight); programmatic
+                // window.location = "/" / .reload() / .replace("/") within
+                // 1500ms of page load are blocked. Once the SPA has had
+                // time to settle, normal navigation works again.
+                '(function(){' +
+                    'var pageStart = Date.now();' +
+                    'var inUserGesture = false;' +
+                    'document.addEventListener(\"click\", function(){ inUserGesture = true; setTimeout(function(){inUserGesture=false;}, 100); }, true);' +
+                    'var origAssign = location.assign.bind(location);' +
+                    'var origReplace = location.replace.bind(location);' +
+                    'var origReload = location.reload.bind(location);' +
+                    'function shouldBlock(target){' +
+                        'var settling = (Date.now() - pageStart) < 1500;' +
+                        'if (settling && !inUserGesture) {' +
+                            'console.warn(\"[Hub-SB] BLOCKED programmatic navigation during settle to:\", target);' +
+                            'return true;' +
+                        '}' +
+                        'return false;' +
+                    '}' +
+                    'location.assign = function(url){ if (shouldBlock(url)) return; return origAssign(url); };' +
+                    'location.replace = function(url){ if (shouldBlock(url)) return; return origReplace(url); };' +
+                    'location.reload = function(){ if (shouldBlock(\"reload\")) return; return origReload.apply(this, arguments); };' +
+                    // Trap href setter on Location.
+                    'try {' +
+                        'var locProto = Object.getPrototypeOf(location);' +
+                        'var hrefDesc = Object.getOwnPropertyDescriptor(locProto, \"href\");' +
+                        'if (hrefDesc && hrefDesc.set) {' +
+                            'var origSet = hrefDesc.set;' +
+                            'Object.defineProperty(locProto, \"href\", {' +
+                                'configurable: true,' +
+                                'get: hrefDesc.get,' +
+                                'set: function(url){ if (shouldBlock(url)) return; return origSet.call(this, url); }' +
+                            '});' +
+                        '}' +
+                    '} catch(e) { console.warn(\"[Hub-SB] href trap failed:\", e); }' +
+                    'console.log(\"[Hub-SB] navigation guard active for first 1500ms\");' +
+                '})();' +
             '})();';
 
         return '<script id="hub-sb-bridge">(function(){try{' +
