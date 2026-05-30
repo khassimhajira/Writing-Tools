@@ -375,10 +375,13 @@ function buildSbBridgeScript(cookieStr) {
 //   - HTML / JSON / API responses: `no-store`. Same as before. Auth-bearing.
 //   - Static assets (images, fonts, css, woff/2): aggressive 1-hour cache.
 //     These don't change per-user and don't carry secrets.
-//   - JS files: small private cache (5 min). They get rewritten so we want a
-//     short-but-non-zero cache to avoid re-downloading the same megabytes
-//     across page loads. Rewriting is deterministic per (domain, slug), so
-//     the same user gets the same patched bytes.
+//   - JS files: NOT cached. We rewrite them on the fly (location-shim,
+//     domain-rewrite, service-specific neuters), and the rewritten version
+//     can change between deploys. Browser-side caching of patched JS would
+//     mean a deploy-time fix doesn't reach users until their cache expires
+//     — the exact bug that kept Grok stuck on stale Sentry-replay code.
+//     Negligible performance cost: our origin still serves gzipped, and the
+//     browser still uses the in-memory parsed bundle within a single page.
 function pickCacheControl(req, contentType, statusCode) {
     if (statusCode && statusCode >= 400) return 'no-store';
     const ct = (contentType || '').toLowerCase();
@@ -398,9 +401,10 @@ function pickCacheControl(req, contentType, statusCode) {
     if (ct.startsWith('font/') || ct.includes('font/woff'))    return 'private, max-age=86400';
     if (ct.includes('text/css'))                               return 'private, max-age=3600';
 
-    // JS files (rewritten): short private cache.
+    // JS files: rewritten on the fly. Force revalidation so a deploy
+    // immediately reaches the browser.
     if (/\.(js|mjs)(\?|$)/i.test(url) || ct.includes('javascript')) {
-        return 'private, max-age=300';
+        return 'no-store';
     }
 
     // Default: don't cache to stay safe.
@@ -1222,19 +1226,36 @@ app.use(async (req, res, next) => {
                         // No rewrite needed — pass original bytes straight through.
                         processedBuffer = bodyBuffer;
                     }
-
-                    // Smart cache: short private cache so the browser doesn't
-                    // re-download the same patched JS on every page nav.
-                    res.setHeader('Cache-Control', pickCacheControl(req, contentType, response.status));
                 }
 
                 // --- SEND RESPONSE ---
+                // Pass through upstream headers EXCEPT:
+                //   - body-length related (we may have rewritten the bytes)
+                //   - security headers we strip to allow iframing
+                //   - cache headers (we set our own with pickCacheControl)
+                //   - validators (etag/last-modified) — if we left these the
+                //     browser would 304-revalidate to upstream's untouched
+                //     bytes, defeating any rewrite or fix we deployed.
+                const skipHeaders = new Set([
+                    'content-length',
+                    'content-security-policy',
+                    'x-frame-options',
+                    'transfer-encoding',
+                    'content-encoding',
+                    'cache-control',
+                    'etag',
+                    'last-modified',
+                    'expires',
+                    'age'
+                ]);
                 Object.keys(response.headers).forEach(key => {
-                    const lowKey = key.toLowerCase();
-                    if (!['content-length', 'content-security-policy', 'x-frame-options', 'transfer-encoding', 'content-encoding'].includes(lowKey)) {
+                    if (!skipHeaders.has(key.toLowerCase())) {
                         res.setHeader(key, response.headers[key]);
                     }
                 });
+
+                // Set Cache-Control AFTER the header copy so we always win.
+                res.setHeader('Cache-Control', pickCacheControl(req, contentType, response.status));
 
                 res.status(response.status === 500 ? 501 : response.status);
                 return res.send(processedBuffer);
