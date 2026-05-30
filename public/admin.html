@@ -761,6 +761,46 @@
 
         initTheme(); loadData();
         document.getElementById('logout-btn').onclick = async () => { await fetch('/hub/api/auth/logout', {method:'POST'}); window.location.href='/'; };
+
+        // ---- Real-time session enforcement ----
+        // Poll /me every 15s. If we get a 401 with code KICKED, another
+        // device just signed in as us — show a clean message and bounce.
+        // Also wraps fetch so any admin API call returning the same code
+        // triggers the same flow.
+        let __sessionDead = false;
+        function showKickedAndBounce() {
+            if (__sessionDead) return;
+            __sessionDead = true;
+            document.body.innerHTML = '<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;text-align:center;padding:14% 20px;color:#fff;max-width:480px;margin:0 auto;">'
+                + '<div style="font-size:48px;margin-bottom:12px;">&#128274;</div>'
+                + '<h2 style="color:#a78bfa;margin:0 0 8px;">Session ended</h2>'
+                + '<p style="color:#cbd5e1;margin:0 0 16px;line-height:1.5;">You signed in on another device. Please log in again to continue.</p>'
+                + '<a href="/admin" style="display:inline-block;background:linear-gradient(135deg,#7C3AED,#8B5CF6);color:#fff;font-weight:700;padding:12px 22px;border-radius:12px;text-decoration:none;">Log in again &rarr;</a></div>';
+        }
+        async function pollSession() {
+            try {
+                const r = await fetch('/hub/api/auth/me', { cache: 'no-store' });
+                if (r.status === 401) {
+                    let body = null;
+                    try { body = await r.json(); } catch (_) {}
+                    if (body && body.code === 'KICKED') showKickedAndBounce();
+                }
+            } catch (_) { /* network blip — try again next tick */ }
+        }
+        setInterval(pollSession, 15000);
+        // Also intercept admin API 401s as an immediate signal.
+        const _origFetch = window.fetch;
+        window.fetch = async function() {
+            const res = await _origFetch.apply(this, arguments);
+            try {
+                if (res.status === 401 && (arguments[0] || '').toString().includes('/hub/api/')) {
+                    const clone = res.clone();
+                    const j = await clone.json().catch(() => null);
+                    if (j && j.code === 'KICKED') showKickedAndBounce();
+                }
+            } catch (_) {}
+            return res;
+        };
         function initTheme() { const btn = document.getElementById('theme-btn'), cont = document.getElementById('theme-icon-container'), update = t => cont.innerHTML = (t === 'light' ? `Dark` : `Light`); btn.onclick = () => { const cur = document.documentElement.getAttribute('data-theme')||'dark', next = cur==='dark'?'light':'dark'; document.documentElement.setAttribute('data-theme', next); localStorage.setItem('admin-theme', next); update(next); }; const saved = localStorage.getItem('admin-theme')||'dark'; document.documentElement.setAttribute('data-theme', saved); update(saved); }
     </script>
 </body>

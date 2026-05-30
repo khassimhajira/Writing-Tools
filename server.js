@@ -152,18 +152,22 @@ app.get('/dashboard', async (req, res) => {
     }
 });
 
-app.get('/admin', (req, res) => {
+app.get('/admin', async (req, res) => {
     const token = req.cookies.stealth_hub_token;
     if (!token) return res.sendFile(path.join(__dirname, 'public', 'admin-login.html'));
-    
+
     try {
-        const verified = jwt.verify(token, JWT_SECRET);
-        if (verified.role === 'admin') {
+        // Verify JWT signature AND that the session_id still matches the DB.
+        // Without the DB check, a kicked admin would keep seeing the
+        // admin page until they manually clicked something.
+        const { user } = await verifyAndCheckSession(token);
+        if (user.role === 'admin') {
             return res.sendFile(path.join(__dirname, 'public', 'admin.html'));
-        } else {
-            return res.sendFile(path.join(__dirname, 'public', 'admin-login.html'));
         }
+        return res.sendFile(path.join(__dirname, 'public', 'admin-login.html'));
     } catch(e) {
+        // Bad/expired/kicked token -- clear cookie and show login.
+        res.clearCookie('stealth_hub_token');
         return res.sendFile(path.join(__dirname, 'public', 'admin-login.html'));
     }
 });

@@ -149,6 +149,28 @@ async function lookupCountry(req, ip) {
     if (cached && (now - cached.ts) < 3600 * 1000) {
         return { country: cached.country, country_code: cached.country_code };
     }
+
+    // Try ip-api.com first (free, 45 req/min, no API key, returns full JSON).
+    // Fall back to ipwho.is if that fails (which now needs a paid CORS plan
+    // but still works server-to-server on the free quota for some IPs).
+    try {
+        const r = await fetch('http://ip-api.com/json/' + encodeURIComponent(ip) + '?fields=status,country,countryCode', {
+            signal: AbortSignal.timeout(4000)
+        });
+        if (r.ok) {
+            const j = await r.json();
+            if (j && j.status === 'success' && j.country) {
+                const out = {
+                    country: j.country,
+                    country_code: (j.countryCode || '').toLowerCase()
+                };
+                ipCache.set(ip, { ts: now, ...out });
+                return out;
+            }
+        }
+    } catch (e) { /* fall through to next provider */ }
+
+    // Secondary fallback: ipwho.is (sometimes still answers free).
     try {
         const r = await fetch('https://ipwho.is/' + encodeURIComponent(ip), { signal: AbortSignal.timeout(4000) });
         if (!r.ok) throw new Error('http ' + r.status);

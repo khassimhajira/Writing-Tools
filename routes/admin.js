@@ -5,7 +5,10 @@ const { JWT_SECRET } = require('./auth');
 
 const router = express.Router();
 
-// Middleware to check Admin role
+// Middleware to check Admin role + enforce single-session.
+// If a different device logged in as this admin, the JWT's session_id
+// no longer matches the DB and we kick. Without this check, a kicked
+// admin tab would keep working until the user manually navigated away.
 const isAdmin = async (req, res, next) => {
     const token = req.cookies.stealth_hub_token;
     if (!token) return res.status(401).json({ error: 'Unauthorized' });
@@ -13,6 +16,22 @@ const isAdmin = async (req, res, next) => {
     try {
         const verified = jwt.verify(token, JWT_SECRET);
         if (verified.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+
+        // Session enforcement: pull the user's current session_id from DB
+        // and compare to the JWT claim. Mismatch = another device took over.
+        try {
+            const dbUser = await get('SELECT session_id, status FROM users WHERE id = ?', [verified.id]);
+            if (!dbUser) return res.status(401).json({ error: 'User not found', code: 'NO_USER' });
+            if (dbUser.status === 'blocked') return res.status(403).json({ error: 'Account suspended' });
+            if (dbUser.session_id && verified.sid && dbUser.session_id !== verified.sid) {
+                return res.status(401).json({ error: 'Session ended on another device.', code: 'KICKED' });
+            }
+        } catch (e) {
+            // If the DB check itself errors, fail closed — safer than letting a stale JWT through.
+            console.error('isAdmin session check failed:', e.message);
+            return res.status(500).json({ error: 'Auth check failed' });
+        }
+
         req.user = verified;
         next();
     } catch(e) {
