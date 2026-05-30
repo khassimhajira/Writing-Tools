@@ -1017,37 +1017,50 @@ app.use(async (req, res, next) => {
 
                             // Close Remix/React Location Leaks
                             //
-                            // CRITICAL: do NOT blindly .bind() every function we hand back.
-                            // Bound functions lose their OWN properties, so e.g.
-                            //   _.Object.getOwnPropertyDescriptor
-                            // becomes undefined because the bound Object function strips
-                            // away assign/keys/getOwnPropertyDescriptor/etc.
-                            // (This is what was breaking grok.com -- Sentry session-replay
-                            // hits exactly that pattern.)
-                            //
-                            // Strategy: for global namespaces / constructors with static
-                            // methods (Object, Array, JSON, Math, ...) return them
-                            // untouched. Only bind plain instance methods that need
-                            // their original receiver (addEventListener, setTimeout, etc.).
+                            // Two crashes we have to dodge here:
+                            //   (a) bound Object/Array etc lose their static methods
+                            //       (Object.getOwnPropertyDescriptor disappears).
+                            //   (b) NOT binding plain instance methods triggers
+                            //       "Illegal invocation" because they need
+                            //       this === realWindow.
+                            // Solution: always bind, then copy own props from the
+                            // original onto the bound result. This gives us the
+                            // right receiver AND preserves Object.assign, Object.keys,
+                            // Promise.resolve, Array.from, etc.
                             const realDefaultView = document.defaultView;
-                            const __isPlainFn = (fn) => {
+                            const __bindCache = new WeakMap();
+                            const __bindSkip = new Set(['length', 'name', 'prototype', 'arguments', 'caller']);
+                            const __safeBind = (fn, target) => {
+                                if (__bindCache.has(fn)) return __bindCache.get(fn);
+                                let bound;
+                                try { bound = fn.bind(target); } catch (_) { return fn; }
                                 try {
-                                    const own = Object.getOwnPropertyNames(fn);
-                                    // length / name / prototype = the 3 default props.
-                                    // Anything more means it is a constructor or namespace
-                                    // with static members we must NOT strip via .bind.
-                                    return own.length <= 3;
-                                } catch (_) { return false; }
+                                    const names = Object.getOwnPropertyNames(fn);
+                                    for (const n of names) {
+                                        if (__bindSkip.has(n)) continue;
+                                        try {
+                                            const desc = Object.getOwnPropertyDescriptor(fn, n);
+                                            if (desc) Object.defineProperty(bound, n, desc);
+                                        } catch (_) {}
+                                    }
+                                    // Also walk symbol keys (e.g. Symbol.species on Promise/Array)
+                                    const syms = Object.getOwnPropertySymbols(fn);
+                                    for (const s of syms) {
+                                        try {
+                                            const desc = Object.getOwnPropertyDescriptor(fn, s);
+                                            if (desc) Object.defineProperty(bound, s, desc);
+                                        } catch (_) {}
+                                    }
+                                } catch (_) {}
+                                __bindCache.set(fn, bound);
+                                return bound;
                             };
                             const __dvProxy = new Proxy(realDefaultView, {
                                 get: (target, prop) => {
                                     if (prop === 'location') return hubLocation;
                                     const val = Reflect.get(target, prop, target);
                                     if (typeof val !== 'function') return val;
-                                    if (__isPlainFn(val)) {
-                                        try { return val.bind(target); } catch (_) { return val; }
-                                    }
-                                    return val;
+                                    return __safeBind(val, target);
                                 }
                             });
                             Object.defineProperty(document, 'defaultView', {
