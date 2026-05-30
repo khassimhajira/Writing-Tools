@@ -1033,7 +1033,14 @@ app.use(async (req, res, next) => {
                             // Promise.resolve, Array.from, etc.
                             const realDefaultView = document.defaultView;
                             const __bindCache = new WeakMap();
-                            const __bindSkip = new Set(['length', 'name', 'prototype', 'arguments', 'caller']);
+                            // Only skip the few props that bound functions
+                            // already auto-define. Crucially, DO copy prototype,
+                            // so constructors like CSSStyleDeclaration, HTMLElement,
+                            // XMLHttpRequest, URL, etc. keep their prototype chain
+                            // accessible. Sentry session-replay walks
+                            // CSSStyleDeclaration.prototype.setProperty -- without
+                            // our prototype copy that returns undefined and crashes.
+                            const __bindSkip = new Set(['length', 'name', 'arguments', 'caller']);
                             const __safeBind = (fn, target) => {
                                 if (__bindCache.has(fn)) return __bindCache.get(fn);
                                 let bound;
@@ -1044,10 +1051,15 @@ app.use(async (req, res, next) => {
                                         if (__bindSkip.has(n)) continue;
                                         try {
                                             const desc = Object.getOwnPropertyDescriptor(fn, n);
-                                            if (desc) Object.defineProperty(bound, n, desc);
+                                            if (desc) {
+                                                // prototype on a bound fn is non-writable
+                                                // and non-configurable, so we have to use
+                                                // defineProperty with a value descriptor
+                                                // instead of going through the existing slot.
+                                                Object.defineProperty(bound, n, desc);
+                                            }
                                         } catch (_) {}
                                     }
-                                    // Also walk symbol keys (e.g. Symbol.species on Promise/Array)
                                     const syms = Object.getOwnPropertySymbols(fn);
                                     for (const s of syms) {
                                         try {
