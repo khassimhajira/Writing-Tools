@@ -4,19 +4,30 @@ require('dotenv').config();
 // silently win over our .env file. We explicitly read .env and OVERWRITE
 // matching keys so the file is the source of truth.
 //
-// We try a list of candidate paths in priority order:
-//   1. ~/stealth_data/.env  — persistent, survives Hostinger deploys
-//   2. ./.env               — in-app, normal default
-// The first one that exists wins. If both exist, persistent overrides
-// in-app (last-write-wins via the loop below).
+// IMPORTANT: process.env.HOME under Passenger points at the DOMAIN folder,
+// not the actual user home. So we can't trust it. We walk up from
+// __dirname looking for a folder with a `domains/` sibling — the typical
+// Hostinger layout `/home/<user>/domains/<domain>/...` makes that the
+// real user home, where our persistent stealth_data lives.
 (function loadEnvFiles() {
     const fs = require('fs');
     const path = require('path');
-    const os = require('os');
-    const home = process.env.HOME || os.homedir() || '';
+    function findUserHome() {
+        let walker = __dirname;
+        for (let i = 0; i < 8; i++) {
+            const parent = path.dirname(walker);
+            if (!parent || parent === walker) break;
+            walker = parent;
+            try {
+                if (fs.existsSync(path.join(walker, 'domains'))) return walker;
+            } catch (_) {}
+        }
+        return null;
+    }
+    const userHome = findUserHome();
     const candidates = [
         path.join(__dirname, '.env'),
-        home ? path.join(home, 'stealth_data', '.env') : null
+        userHome ? path.join(userHome, 'stealth_data', '.env') : null
     ].filter(Boolean);
 
     for (const envPath of candidates) {

@@ -2,14 +2,31 @@ require('dotenv').config();
 // Same belt-and-braces .env loader as server.js — try persistent location
 // first, then in-app fallback. Last-write-wins so persistent values
 // override anything that's in the in-app file.
+//
+// IMPORTANT: under Hostinger Passenger, process.env.HOME points at the
+// DOMAIN folder, not the actual user home. We can't trust it. Instead
+// we walk up from __dirname looking for a folder that has a `domains/`
+// sibling (typical Hostinger layout: /home/<user>/domains/<domain>/...)
+// and that's the real user home.
 (function loadEnvFiles() {
     const fs = require('fs');
     const path = require('path');
-    const os = require('os');
-    const home = process.env.HOME || os.homedir() || '';
+    function findUserHome() {
+        let walker = __dirname;
+        for (let i = 0; i < 8; i++) {
+            const parent = path.dirname(walker);
+            if (!parent || parent === walker) break;
+            walker = parent;
+            try {
+                if (fs.existsSync(path.join(walker, 'domains'))) return walker;
+            } catch (_) {}
+        }
+        return null;
+    }
+    const userHome = findUserHome();
     const candidates = [
         path.join(__dirname, '..', '.env'),
-        home ? path.join(home, 'stealth_data', '.env') : null
+        userHome ? path.join(userHome, 'stealth_data', '.env') : null
     ].filter(Boolean);
 
     for (const envPath of candidates) {
