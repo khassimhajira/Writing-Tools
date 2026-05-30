@@ -1202,6 +1202,21 @@ app.use(async (req, res, next) => {
                         js = js.replace(/from\s*["'](\/cdn\/[^"']+)["']/g, `from "${cleanBase}$1"`);
                         js = js.replace(/import\s*\(["'](\/cdn\/[^"']+)["']\)/g, `import("${cleanBase}$1")`);
 
+                        // ---- Sentry session-replay neuter (Grok-specific) ----
+                        // Sentry's bundled session-replay tries to record DOM
+                        // events on the iframe's cross-origin document and dies.
+                        // We make its core methods no-ops so init completes
+                        // cleanly. Only target patterns that are uniquely
+                        // Sentry-SDK to avoid colliding with Grok's app code.
+                        if (service.slug === 'grok') {
+                            // `startRecording(){try{` is the exact Sentry replay signature.
+                            js = js.replace(/\bstartRecording\(\)\{try\{/g, 'startRecording(){return;try{');
+                            // `_initializeRecording(){` only appears in Sentry replay.
+                            js = js.replace(/\b_initializeRecording\(\)\{/g, '_initializeRecording(){return;');
+                            // `sendBufferedReplayOrFlush` is unique to Sentry replay.
+                            js = js.replace(/\bsendBufferedReplayOrFlush\(\)\{/g, 'sendBufferedReplayOrFlush(){return Promise.resolve();');
+                        }
+
                         processedBuffer = Buffer.from(js);
                     } else {
                         // No rewrite needed — pass original bytes straight through.
