@@ -197,8 +197,133 @@ function buildSbBridgeScript(cookieStr) {
 
         if (items.length === 0) return '';
         const payload = JSON.stringify(items);
-        console.log('[Hub-SB] bridge prepared with ' + items.length + ' Supabase ref(s)');
-        return '<script id="hub-sb-bridge">(function(){try{var items=' + payload + ';for(var i=0;i<items.length;i++){var it=items[i];try{localStorage.setItem(it.key,it.json);}catch(e){}}}catch(e){}})();</script>';
+
+        // Extract the projectRef + parsed session for each token. The interceptor
+        // uses these to reply to Supabase REST calls with synthetic responses.
+        const sessions = [];
+        for (const it of items) {
+            try {
+                const parsed = JSON.parse(it.json);
+                const m = it.key.match(/^sb-([a-z0-9-]+)-auth-token$/i);
+                const ref = m ? m[1] : null;
+                if (!ref || !parsed) continue;
+                sessions.push({ ref, session: parsed });
+            } catch (_) {}
+        }
+        const sessionsPayload = JSON.stringify(sessions);
+
+        console.log('[Hub-SB] bridge prepared with ' + items.length + ' Supabase ref(s) + ' + sessions.length + ' session(s) for fetch mock');
+
+        // The injected script does TWO things:
+        //   1. Write the auth tokens to localStorage (original behavior).
+        //   2. Wrap window.fetch and XMLHttpRequest so that any call to
+        //      `https://<ref>.supabase.co/auth/v1/...` is intercepted and
+        //      answered locally with a synthesized response built from the
+        //      JWT we already have. This stops Supabase's SDK from making
+        //      a real network call that would fail (CORS / network) and
+        //      cause it to clear the session and redirect.
+        const interceptor =
+            '(function(){' +
+                'var sessions = ' + sessionsPayload + ';' +
+                'if (!sessions.length) return;' +
+                'var byRef = {};' +
+                'sessions.forEach(function(s){ byRef[s.ref] = s.session; });' +
+                'function jsonResponse(obj, status){ status = status||200; ' +
+                    'var body = JSON.stringify(obj);' +
+                    'return new Response(body, { status: status, statusText: status===200?\"OK\":\"Error\", headers: { \"Content-Type\": \"application/json\" } });' +
+                '}' +
+                'function answer(url){' +
+                    'try {' +
+                        'var u = new URL(url, location.href);' +
+                        'var m = u.host.match(/^([a-z0-9-]+)\\\\.supabase\\\\.co$/i);' +
+                        'if (!m) return null;' +
+                        'var ref = m[1].toLowerCase();' +
+                        'var sess = byRef[ref];' +
+                        'if (!sess) return null;' +
+                        'var path = u.pathname;' +
+                        // /auth/v1/user — return the user object.
+                        'if (path === \"/auth/v1/user\") {' +
+                            'console.log(\"[Hub-SB] mock /auth/v1/user\");' +
+                            'return jsonResponse(sess.user || {});' +
+                        '}' +
+                        // /auth/v1/token — refresh flow. Return the same session as if it succeeded.
+                        // This avoids real refresh churn. Token will eventually expire upstream
+                        // but the user can re-paste cookies.
+                        'if (path === \"/auth/v1/token\") {' +
+                            'console.log(\"[Hub-SB] mock /auth/v1/token\");' +
+                            'return jsonResponse({' +
+                                'access_token: sess.access_token,' +
+                                'token_type: sess.token_type || \"bearer\",' +
+                                'expires_in: sess.expires_in || 3600,' +
+                                'expires_at: sess.expires_at || (Math.floor(Date.now()/1000) + 3600),' +
+                                'refresh_token: sess.refresh_token,' +
+                                'user: sess.user' +
+                            '});' +
+                        '}' +
+                        // /auth/v1/logout — pretend success but DO NOT clear localStorage.
+                        'if (path === \"/auth/v1/logout\") {' +
+                            'console.log(\"[Hub-SB] mock /auth/v1/logout (no-op)\");' +
+                            'return jsonResponse({});' +
+                        '}' +
+                        // Any other auth path — return empty 200 to keep SDK happy.
+                        'if (path.indexOf(\"/auth/v1/\") === 0) {' +
+                            'console.log(\"[Hub-SB] mock other auth:\", path);' +
+                            'return jsonResponse({});' +
+                        '}' +
+                    '} catch(e) {}' +
+                    'return null;' +
+                '}' +
+                // Wrap fetch
+                'var origFetch = window.fetch;' +
+                'window.fetch = function(input, init){' +
+                    'try {' +
+                        'var url = typeof input === \"string\" ? input : (input && input.url) || \"\";' +
+                        'var fake = answer(url);' +
+                        'if (fake) return Promise.resolve(fake);' +
+                    '} catch(e) {}' +
+                    'return origFetch.apply(this, arguments);' +
+                '};' +
+                // Wrap XHR
+                'var origOpen = XMLHttpRequest.prototype.open;' +
+                'var origSend = XMLHttpRequest.prototype.send;' +
+                'XMLHttpRequest.prototype.open = function(method, url){' +
+                    'this.__hub_sb_url = url;' +
+                    'return origOpen.apply(this, arguments);' +
+                '};' +
+                'XMLHttpRequest.prototype.send = function(body){' +
+                    'var url = this.__hub_sb_url;' +
+                    'try {' +
+                        'var u = new URL(url, location.href);' +
+                        'var m = u.host.match(/^([a-z0-9-]+)\\\\.supabase\\\\.co$/i);' +
+                        'if (m && byRef[m[1].toLowerCase()]) {' +
+                            'var fake = answer(url);' +
+                            'if (fake) {' +
+                                'var xhr = this;' +
+                                'fake.text().then(function(text){' +
+                                    'try {' +
+                                        'Object.defineProperty(xhr, \"readyState\", { configurable:true, get: function(){ return 4; } });' +
+                                        'Object.defineProperty(xhr, \"status\", { configurable:true, get: function(){ return 200; } });' +
+                                        'Object.defineProperty(xhr, \"responseText\", { configurable:true, get: function(){ return text; } });' +
+                                        'Object.defineProperty(xhr, \"response\", { configurable:true, get: function(){ return text; } });' +
+                                        'xhr.dispatchEvent(new Event(\"readystatechange\"));' +
+                                        'xhr.dispatchEvent(new Event(\"load\"));' +
+                                        'xhr.dispatchEvent(new Event(\"loadend\"));' +
+                                    '} catch(e){}' +
+                                '});' +
+                                'return;' +
+                            '}' +
+                        '}' +
+                    '} catch(e) {}' +
+                    'return origSend.apply(this, arguments);' +
+                '};' +
+                'console.log(\"[Hub-SB] supabase fetch/XHR interceptor active for refs:\", Object.keys(byRef));' +
+            '})();';
+
+        return '<script id="hub-sb-bridge">(function(){try{' +
+                  'var items=' + payload + ';' +
+                  'for(var i=0;i<items.length;i++){var it=items[i];try{localStorage.setItem(it.key,it.json);}catch(e){}}' +
+                  '}catch(e){}})();</script>' +
+               '<script id="hub-sb-intercept">' + interceptor + '</script>';
     } catch(e) {
         console.error('[Hub-SB] bridge prep failed:', e.message);
         return '';
