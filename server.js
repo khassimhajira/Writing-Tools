@@ -913,6 +913,14 @@ app.use(async (req, res, next) => {
         io.to('admins').emit('proxy_activity_update', Array.from(activeProxyUsers.keys()));
 
         let rawCookieData = assignment.cookie_data || '';
+        // Defensive: SQLite columns can come back as Buffer (BLOB) instead of
+        // string when a row was inserted via readfile() or similar. The code
+        // below treats this as text; coerce so .trim() and .startsWith() work.
+        if (Buffer.isBuffer(rawCookieData)) {
+            rawCookieData = rawCookieData.toString('utf8');
+        } else if (typeof rawCookieData !== 'string') {
+            rawCookieData = String(rawCookieData);
+        }
         let processedCookie = rawCookieData;
         if (rawCookieData.trim().startsWith('[') && rawCookieData.trim().endsWith(']')) {
             try {
