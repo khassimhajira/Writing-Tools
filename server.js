@@ -385,12 +385,19 @@ function buildSbBridgeScript(cookieStr) {
                 '};' +
                 'console.log(\"[Hub-SB] supabase fetch/XHR interceptor active for refs:\", Object.keys(byRef));' +
 
-                // Navigation guard: stop the redirect loop without breaking
-                // intentional navigation. We allow nav only if explicitly
-                // triggered by a user click (event in flight); programmatic
-                // window.location = "/" / .reload() / .replace("/") within
-                // 1500ms of page load are blocked. Once the SPA has had
-                // time to settle, normal navigation works again.
+                // Navigation guard: stop redirect loops without breaking
+                // intentional navigation. Two layers:
+                //   1. For the first 1500ms after load, ALL programmatic
+                //      navigation is blocked unless triggered by a click.
+                //   2. After 1500ms, we still block any programmatic
+                //      navigation that targets the CURRENT page (those are
+                //      pure self-replaces / refresh loops with no purpose).
+                //
+                // Why this works for WriteHuman: their Next.js bundle calls
+                // location.replace('/') even when the user is already on '/',
+                // which causes a tight reload loop in our iframe. Blocking
+                // self-targeted replaces breaks the loop without affecting
+                // any legitimate route change.
                 '(function(){' +
                     'var pageStart = Date.now();' +
                     'var inUserGesture = false;' +
@@ -398,10 +405,27 @@ function buildSbBridgeScript(cookieStr) {
                     'var origAssign = location.assign.bind(location);' +
                     'var origReplace = location.replace.bind(location);' +
                     'var origReload = location.reload.bind(location);' +
+                    'function isSelfTarget(target){' +
+                        'try {' +
+                            'var here = location.pathname + location.search;' +
+                            'var t = String(target || \"\");' +
+                            'if (!t) return true;' +
+                            'if (t === here) return true;' +
+                            'if (t === location.href) return true;' +
+                            // Resolve against current location, then compare paths.
+                            'var u = new URL(t, location.href);' +
+                            'if (u.host !== location.host) return false;' +
+                            'return (u.pathname + u.search) === here;' +
+                        '} catch(e) { return false; }' +
+                    '}' +
                     'function shouldBlock(target){' +
                         'var settling = (Date.now() - pageStart) < 1500;' +
                         'if (settling && !inUserGesture) {' +
-                            'console.warn(\"[Hub-SB] BLOCKED programmatic navigation during settle to:\", target);' +
+                            'console.warn(\"[Hub-SB] BLOCKED nav during settle to:\", target);' +
+                            'return true;' +
+                        '}' +
+                        'if (isSelfTarget(target) && !inUserGesture) {' +
+                            'console.warn(\"[Hub-SB] BLOCKED self-replace to:\", target);' +
                             'return true;' +
                         '}' +
                         'return false;' +
@@ -422,7 +446,7 @@ function buildSbBridgeScript(cookieStr) {
                             '});' +
                         '}' +
                     '} catch(e) { console.warn(\"[Hub-SB] href trap failed:\", e); }' +
-                    'console.log(\"[Hub-SB] navigation guard active for first 1500ms\");' +
+                    'console.log(\"[Hub-SB] navigation guard active (settle 1500ms + self-replace permanent)\");' +
                 '})();' +
             '})();';
 
