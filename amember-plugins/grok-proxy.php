@@ -126,10 +126,11 @@ if (is_readable($COOKIE_FILE)) {
 // React error boundary ("Something went wrong"). Returning a benign
 // 204 No Content tells the beacon it succeeded and the page keeps
 // running.
-if (preg_match('#^/cdn-cgi/#', $path)) {
+if (preg_match('#^/cdn-cgi/#', $path) || preg_match('#^/monitoring(\?|$)#', $path)) {
     http_response_code(204);
     header('Content-Length: 0');
     header('Cache-Control: no-store');
+    header('Access-Control-Allow-Origin: *');
     exit;
 }
 
@@ -324,14 +325,14 @@ if ($isHtml && $body !== '') {
         . 'try{var _origFetch=window.fetch;'
         . 'window.fetch=function(input,init){'
             . 'try{var url=typeof input==="string"?input:(input&&input.url)||"";'
-            . 'if(url && url.indexOf("/cdn-cgi/")!==-1){return Promise.resolve(new Response(null,{status:204,statusText:"No Content"}));}'
+            . 'if(url && (url.indexOf("/cdn-cgi/")!==-1 || url.indexOf("/monitoring?")!==-1 || url.indexOf("/monitoring/")!==-1)){return Promise.resolve(new Response(null,{status:204,statusText:"No Content"}));}'
             . '}catch(e){}'
             . 'return _origFetch.apply(this,arguments);'
         . '};'
         . 'var _origSend=XMLHttpRequest.prototype.send;'
         . 'var _origOpen=XMLHttpRequest.prototype.open;'
         . 'XMLHttpRequest.prototype.open=function(method,url){'
-            . 'this.__cdn_cgi=(typeof url==="string"&&url.indexOf("/cdn-cgi/")!==-1);'
+            . 'this.__cdn_cgi=(typeof url==="string"&&(url.indexOf("/cdn-cgi/")!==-1||url.indexOf("/monitoring?")!==-1||url.indexOf("/monitoring/")!==-1));'
             . 'return _origOpen.apply(this,arguments);'
         . '};'
         . 'XMLHttpRequest.prototype.send=function(){'
@@ -349,7 +350,7 @@ if ($isHtml && $body !== '') {
         . '};'
         . 'if(navigator.sendBeacon){var _origBeacon=navigator.sendBeacon.bind(navigator);'
             . 'navigator.sendBeacon=function(url,data){'
-                . 'try{if(typeof url==="string" && url.indexOf("/cdn-cgi/")!==-1)return true;}catch(e){}'
+                . 'try{if(typeof url==="string" && (url.indexOf("/cdn-cgi/")!==-1||url.indexOf("/monitoring")!==-1))return true;}catch(e){}'
                 . 'return _origBeacon(url,data);'
             . '};}'
         . '}catch(e){}'
