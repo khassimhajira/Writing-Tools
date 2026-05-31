@@ -412,7 +412,17 @@ $INJECT = '<script>(function(){'
         . 'try{console.warn("[grok-proxy.error]",e&&e.message,e&&e.filename,e&&(e.lineno+":"+e.colno),e&&e.error&&e.error.stack);}catch(_){}'
     . '},true);'
     . 'window.addEventListener("unhandledrejection",function(e){'
-        . 'try{var r=e&&e.reason; console.warn("[grok-proxy.unhandled]", r&&r.message||String(r), r&&r.stack||"");}catch(_){}'
+        . 'try{var r=e&&e.reason;'
+            . 'var msg=r&&r.message||String(r||"");'
+            // Swallow analytics/telemetry promise rejections so they
+            // can\'t propagate to Grok\'s error handler that triggers a
+            // redirect-to-grok.com.
+            . 'if(/Failed to fetch|gtm|google-analytics|sgtm|sentry|onetrust|cookielaw|analytics|segment/i.test(msg)){'
+                . 'console.warn("[grok-proxy.swallowed-rejection]", msg);'
+                . 'e.preventDefault();return false;'
+            . '}'
+            . 'console.warn("[grok-proxy.unhandled]", msg, r&&r.stack||"");'
+        . '}catch(_){}'
     . '});'
     . '}catch(e){}'
     // URL rewriter + telemetry stub for fetch/XHR/sendBeacon.
@@ -437,20 +447,39 @@ $INJECT = '<script>(function(){'
             . 'if(url.indexOf("/cdn-cgi/zaraz")!==-1)return true;'
             . 'if(url.indexOf("sentry-cdn.com")!==-1)return true;'
             . 'if(url.indexOf(".ingest.sentry.io")!==-1)return true;'
-            // Grok\'s sentry monitoring path (note: project endpoints
-            // also live under /monitoring sometimes; only short-circuit
-            // when the query string explicitly includes Sentry\'s o= and p=
-            // params).
+            // Grok\'s sentry monitoring path
             . 'if(/[?&]o=\\d+/.test(url) && /[?&]p=\\d+/.test(url) && url.indexOf("/monitoring")!==-1)return true;'
+            // Google Tag Manager + server-side GTM (sgtm-...run.app).
+            // These FAIL when our origin doesn\'t match and their error
+            // handlers throw past our location guards. Stub them all.
+            . 'if(url.indexOf("googletagmanager.com")!==-1)return true;'
+            . 'if(url.indexOf("google-analytics.com")!==-1)return true;'
+            . 'if(/sgtm[a-z0-9.-]*\\.run\\.app/.test(url))return true;'
+            . 'if(url.indexOf("region1.google-analytics.com")!==-1)return true;'
+            // OneTrust cookie banner sends events back home.
+            . 'if(url.indexOf("cookielaw.org")!==-1)return true;'
+            . 'if(url.indexOf("onetrust.com")!==-1)return true;'
+            // Grok\'s segment / analytics endpoints
+            . 'if(url.indexOf("api.segment.io")!==-1)return true;'
+            . 'if(url.indexOf("/v1/track")!==-1 && url.indexOf("segment")!==-1)return true;'
         . '}catch(e){}return false;'
     . '}'
     . 'var _of=window.fetch;'
     . 'window.fetch=function(input,init){'
         . 'try{var url=typeof input==="string"?input:(input&&input.url)||"";'
-        . 'if(url && _tele(url)){return Promise.resolve(new Response(null,{status:204,statusText:"No Content"}));}'
+        . 'if(url && _tele(url)){return Promise.resolve(new Response("{}",{status:200,headers:{"Content-Type":"application/json"}}));}'
         . 'if(typeof input==="string"){var ru=_rw(input);if(ru!==input)input=ru;}'
         . '}catch(e){}'
-        . 'return _of.apply(this,[input,init]);'
+        // Wrap the actual fetch call so analytics-style fetches that
+        // throw at the network layer (DNS fail, CORS, etc.) don\'t
+        // bubble up to Grok\'s error boundary as unhandled rejections.
+        . 'return _of.apply(this,[input,init]).catch(function(err){'
+            . 'try{var u=typeof input==="string"?input:(input&&input.url)||"";'
+            . 'if(u && (_tele(u) || /\\b(google|gtm|analytics|sentry|cookielaw|onetrust|segment)\\b/i.test(u))){'
+                . 'return new Response("{}",{status:200,headers:{"Content-Type":"application/json"}});'
+            . '}}catch(_){}'
+            . 'throw err;'
+        . '});'
     . '};'
     . 'var _os=XMLHttpRequest.prototype.send;'
     . 'var _oo=XMLHttpRequest.prototype.open;'
