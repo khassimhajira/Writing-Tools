@@ -336,6 +336,48 @@ $INJECT = '<script>(function(){'
     . 'history.pushState=function(s,t,u){return _ps(s,t,_fixLoc(u));};'
     . 'history.replaceState=function(s,t,u){return _rs(s,t,_fixLoc(u));};'
     . '}catch(e){}'
+    // Last-mile protection: intercept anchor clicks and form submits at
+    // capture phase. If the target URL is grok.com, rewrite the href /
+    // action attribute right before navigation. This catches
+    // programmatic .click() and .submit() calls AND user clicks.
+    . 'try{document.addEventListener("click",function(e){'
+        . 'var a=e.target && e.target.closest && e.target.closest("a[href]");'
+        . 'if(a){'
+            . 'try{var h=a.getAttribute("href");if(h && (h.indexOf("https://grok.com")===0 || h.indexOf("http://grok.com")===0 || h.indexOf("//grok.com")===0)){'
+                . 'a.setAttribute("href",_fixLoc(h));'
+            . '}}catch(_){}'
+        . '}'
+    . '},true);'
+    . 'document.addEventListener("submit",function(e){'
+        . 'var f=e.target;'
+        . 'if(f && f.tagName==="FORM"){'
+            . 'try{var act=f.getAttribute("action")||"";if(act && (act.indexOf("https://grok.com")===0 || act.indexOf("http://grok.com")===0 || act.indexOf("//grok.com")===0)){'
+                . 'f.setAttribute("action",_fixLoc(act));'
+            . '}}catch(_){}'
+        . '}'
+    . '},true);'
+    . '}catch(e){}'
+    // Kill <meta http-equiv="refresh" content="0;URL=https://grok.com/...">
+    // by scrubbing them on insertion.
+    . 'try{function _killMetaRefresh(){'
+        . 'var ms=document.querySelectorAll(\'meta[http-equiv="refresh" i]\');'
+        . 'for(var i=0;i<ms.length;i++){'
+            . 'var c=ms[i].getAttribute("content")||"";'
+            . 'if(c.indexOf("grok.com")!==-1){try{ms[i].remove();}catch(e){}}'
+        . '}'
+    . '}'
+    . '_killMetaRefresh();'
+    . 'var _mrObs=new MutationObserver(_killMetaRefresh);'
+    . 'if(document.documentElement)_mrObs.observe(document.documentElement,{subtree:true,childList:true});'
+    . 'setTimeout(function(){try{_mrObs.disconnect();}catch(e){}},10000);'
+    . '}catch(e){}'
+    // Swallow the React/Next router\'s auto-redirect-to-grok.com path.
+    // Some Next bundles include a hostname guard like
+    //   if (location.hostname !== "grok.com") location.href = "https://grok.com" + ...
+    // We already override location.hostname to return "grok.com" so the
+    // guard SHOULD pass — but if it uses location.host or window.location.origin
+    // we cover those too.
+    . 'try{Object.defineProperty(location,"origin",{configurable:true,get:function(){return "https://grok.com";}});}catch(e){}'
     . '}catch(e){}'
     // Strip CSP / X-Frame meta tags as soon as they appear. Grok\'s SSR
     // injects <meta http-equiv="Content-Security-Policy" content="...
