@@ -288,12 +288,82 @@ if ($isHtml && $body !== '') {
         . '};}catch(e){}'
         . '})();</script>';
 
+    // ---------------- Cosmetic hider ----------------
+    // Hide UI elements that reveal the master account (My Account, Sign
+    // Out), expose the brand for direct sign-up (Pricing, API, Affiliates,
+    // Blog, mobile-app prompt, top announcement banner), or otherwise let
+    // students bypass our Hub. Same idea as the injection_js used by other
+    // services in the path proxy. Two layers:
+    //
+    //   1. A stylesheet that hides matching elements by text content
+    //      (using :has()) the moment it parses. Modern browsers support
+    //      :has() so the elements never flash.
+    //   2. A small MutationObserver that re-applies the hide on every DOM
+    //      change for older browsers / dynamic re-renders by Next.js.
+    $cosmeticHider = '<style>'
+        // Top announcement strip ("New! May 12: Enhanced Model..."). It\'s
+        // the very first banner-style div under <header>.
+        . 'header > div:first-child:not(:has(nav,a[href="/"])){display:none !important;}'
+        // The nav <a> entries we want to hide. We match by visible label
+        // because their href and class names are minified. :has() lets a
+        // CSS-only rule check inner text via a sibling span.
+        . 'header nav a[href*="/account"],'
+        . 'header nav a[href*="/billing"],'
+        . 'header nav a[href*="/pricing"],'
+        . 'header nav a[href*="/affiliate"],'
+        . 'header nav a[href*="/api"],'
+        . 'header nav a[href*="/blog"],'
+        . 'header nav a[href*="/sign-out"],'
+        . 'header nav a[href*="/signout"],'
+        . 'header nav a[href*="/logout"],'
+        . 'header nav button[aria-label*="account" i],'
+        . 'header nav button[aria-label*="sign out" i]'
+        . '{display:none !important;}'
+        // Mobile app prompt ("New WriteHuman mobile app available")
+        . 'div:has(> a[href*="apps.apple.com"]),'
+        . 'div:has(> a[href*="play.google.com"]),'
+        . 'div:has(> [class*="mobile"][class*="app"]){display:none !important;}'
+        // Footer with affiliate/pricing/legal links — keep the chat UI clean.
+        . 'footer{display:none !important;}'
+        . '</style>';
+
+    $hideScript = '<script>(function(){'
+        . 'function hideByText(){'
+        // Walk every <a> and <button> inside <header> (and any <nav>
+        // anywhere) and hide those whose visible text matches the
+        // forbidden labels. Case-insensitive, handles whitespace.
+        . 'var bad=/^(My Account|Sign Out|Sign out|Logout|Log Out|Pricing|API|Affiliates|Affiliate|Blog|Tools)$/i;'
+        . 'var nodes=document.querySelectorAll("header a,header button,nav a,nav button");'
+        . 'for(var i=0;i<nodes.length;i++){'
+            . 'var t=(nodes[i].textContent||"").trim();'
+            . 'if(bad.test(t)){'
+                // Hide the link itself and its parent <li> if any.
+                . 'var n=nodes[i];'
+                . 'try{n.style.display="none";'
+                    . 'if(n.parentElement && n.parentElement.tagName==="LI"){n.parentElement.style.display="none";}'
+                . '}catch(e){}'
+            . '}'
+        . '}'
+        // Hide common upgrade/banner CTAs by inner text (anywhere on page).
+        . 'var banners=document.querySelectorAll("a,button,div[role=\"banner\"]");'
+        . 'for(var j=0;j<banners.length;j++){'
+            . 'var bt=(banners[j].textContent||"").trim();'
+            . 'if(/^(Upgrade|Subscribe|Get Pro|Get Ultra|Manage Subscription|Account Settings)$/i.test(bt)){'
+                . 'try{banners[j].style.display="none";}catch(e){}'
+            . '}'
+        . '}'
+        . '}'
+        // Run once now, then on every DOM change. The observer is cheap.
+        . 'function start(){hideByText();var mo=new MutationObserver(hideByText);mo.observe(document.documentElement,{subtree:true,childList:true});}'
+        . 'if(document.readyState==="loading"){document.addEventListener("DOMContentLoaded",start);}else{start();}'
+        . '})();</script>';
+
     // Inject as the very first element after <head> so it runs before
     // any of the upstream\'s own scripts (including the inline guard
     // that we also neutralize via regex above).
     $body = preg_replace(
         '/<head([^>]*)>/i',
-        '<head$1>' . $hostnameOverride . '<base href="https://' . htmlspecialchars($PROXY_HOST, ENT_QUOTES) . '/">',
+        '<head$1>' . $hostnameOverride . $cosmeticHider . $hideScript . '<base href="https://' . htmlspecialchars($PROXY_HOST, ENT_QUOTES) . '/">',
         $body,
         1
     );
