@@ -332,7 +332,7 @@ if ($isHtml && $body !== '') {
         // Walk every <a> and <button> inside <header> (and any <nav>
         // anywhere) and hide those whose visible text matches the
         // forbidden labels. Case-insensitive, handles whitespace.
-        . 'var bad=/^(My Account|Sign Out|Sign out|Logout|Log Out|Pricing|API|Affiliates|Affiliate|Blog|Tools)$/i;'
+        . 'var bad=/^(My Account|Sign Out|Sign out|Logout|Log Out|Pricing|API|Affiliates|Affiliate|Blog)$/i;'
         . 'var nodes=document.querySelectorAll("header a,header button,nav a,nav button");'
         . 'for(var i=0;i<nodes.length;i++){'
             . 'var t=(nodes[i].textContent||"").trim();'
