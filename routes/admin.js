@@ -64,21 +64,22 @@ router.get('/services', async (req, res) => {
 
 // Add new service
 router.post('/services', async (req, res) => {
-    const { name, target_url, icon_svg, text_svg, injection_js, amember_product_id, daily_limit, billable_path } = req.body;
+    const { name, target_url, icon_svg, text_svg, injection_js, amember_product_id, daily_limit, billable_path, cookie_file } = req.body;
     const slug = (req.body.slug || '').trim();
     const dl = (daily_limit === '' || daily_limit == null) ? null : parseInt(daily_limit, 10);
     const bp = typeof billable_path === 'string' ? billable_path.trim() : '';
+    const cf = typeof cookie_file === 'string' ? cookie_file.trim() : '';
     try {
-        await run(`INSERT INTO services (name, slug, target_url, icon_svg, text_svg, injection_js, amember_product_id, daily_limit, billable_path) 
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
-                   [name, slug, target_url, icon_svg, text_svg, injection_js, amember_product_id || null, Number.isFinite(dl) && dl > 0 ? dl : null, bp || null]);
+        await run(`INSERT INTO services (name, slug, target_url, icon_svg, text_svg, injection_js, amember_product_id, daily_limit, billable_path, cookie_file)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                   [name, slug, target_url, icon_svg, text_svg, injection_js, amember_product_id || null, Number.isFinite(dl) && dl > 0 ? dl : null, bp || null, cf || null]);
         res.status(201).json({ message: 'Service added' });
     } catch(e) { res.status(500).json({ error: 'Database error: ' + e.message }); }
 });
 
 // Update service
 router.put('/services/:id', async (req, res) => {
-    const { name, target_url, icon_svg, text_svg, injection_js, amember_product_id, daily_limit, billable_path } = req.body;
+    const { name, target_url, icon_svg, text_svg, injection_js, amember_product_id, daily_limit, billable_path, cookie_file } = req.body;
     const slug = (req.body.slug || '').trim();
 
     // SAFETY: only overwrite daily_limit when the client explicitly sends it.
@@ -119,11 +120,26 @@ router.put('/services/:id', async (req, res) => {
         }
     }
 
+    // Same preserve-when-omitted policy for cookie_file.
+    let cfSql = '';
+    let cfParam = null;
+    let cfHasParam = false;
+    if (Object.prototype.hasOwnProperty.call(req.body, 'cookie_file')) {
+        if (cookie_file === '' || cookie_file === null) {
+            cfSql = ', cookie_file = NULL';
+        } else if (typeof cookie_file === 'string') {
+            cfSql = ', cookie_file = ?';
+            cfParam = cookie_file.trim();
+            cfHasParam = true;
+        }
+    }
+
     try {
         const params = [name, slug, target_url, icon_svg, text_svg, injection_js, amember_product_id];
-        let sql = `UPDATE services SET name = ?, slug = ?, target_url = ?, icon_svg = ?, text_svg = ?, injection_js = ?, amember_product_id = ?${dlSql}${bpSql} WHERE id = ?`;
+        let sql = `UPDATE services SET name = ?, slug = ?, target_url = ?, icon_svg = ?, text_svg = ?, injection_js = ?, amember_product_id = ?${dlSql}${bpSql}${cfSql} WHERE id = ?`;
         if (dlHasParam) params.push(dlParam);
         if (bpHasParam) params.push(bpParam);
+        if (cfHasParam) params.push(cfParam);
         params.push(req.params.id);
 
         await run(sql, params);
@@ -783,6 +799,162 @@ router.delete('/services/:id/usage', async (req, res) => {
         res.json({ message: 'All usage cleared for this service', removed: result.changes });
     } catch(e) {
         res.status(500).json({ error: 'Database error' });
+    }
+});
+
+
+// --- COOKIE FILES ---
+//
+// For services that proxy via a shared upstream account (WriteHuman is
+// the first), the upstream session lives in a file on disk. Admins
+// rotate it from this UI by pasting whatever the browser shows them.
+//
+// We accept two shapes of paste:
+//   1. The full cookie line:
+//        sb-...-auth-token=base64-eyJ...; sb-session-token=...; ...
+//   2. Just the long auth-token value (`base64-eyJ...` or `eyJ...`)
+//      and we wrap it with the canonical name. Helps non-technical
+//      admins who copy from DevTools' "Value" cell.
+//
+// On read, we decode the access-token JWT and surface its expiry so the
+// UI can show "active until 17:45 UTC" or "expired".
+
+const fs = require('fs');
+const path = require('path');
+
+// Defensive: refuse paths that aren\'t under our known data dir. This
+// prevents a misconfigured service row from letting an admin overwrite
+// /etc/passwd. The data dir is wherever the persistent .env lives.
+function isSafeCookiePath(p) {
+    if (!p || typeof p !== 'string') return false;
+    const norm = path.resolve(p);
+    // Allow only files under stealth_data/ (production) or our local
+    // workspace tools/ folder for dev. Both conventions end with that
+    // path segment.
+    return /(?:[\\/]stealth_data[\\/])|(?:[\\/]tools[\\/])/.test(norm)
+        && norm.endsWith('.txt');
+}
+
+function decodeSupabaseAuthCookie(cookieLine) {
+    // Pull the supabase auth-token cookie out of the line and decode its
+    // wrapped session blob to extract expires_at + email.
+    if (!cookieLine) return {};
+    const m = /sb-[a-z0-9]+-auth-token=([^;]+)/i.exec(cookieLine);
+    if (!m) return {};
+    let value = decodeURIComponent(m[1].trim());
+    if (value.startsWith('base64-')) {
+        try {
+            value = Buffer.from(value.slice(7).replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+        } catch (_) { return {}; }
+    }
+    try {
+        const blob = JSON.parse(value);
+        return {
+            expires_at: blob.expires_at || null,
+            email: (blob.user && blob.user.email) || null,
+            full_name: blob.user && blob.user.user_metadata && blob.user.user_metadata.full_name || null,
+            has_refresh_token: !!blob.refresh_token,
+        };
+    } catch (_) { return {}; }
+}
+
+// Get cookie file status for a service (without leaking the raw token).
+router.get('/services/:id/cookie-file', async (req, res) => {
+    try {
+        const svc = await get('SELECT id, name, cookie_file FROM services WHERE id = ?', [req.params.id]);
+        if (!svc) return res.status(404).json({ error: 'Service not found' });
+        if (!svc.cookie_file) return res.json({ configured: false });
+
+        const out = { configured: true, path: svc.cookie_file };
+        if (!isSafeCookiePath(svc.cookie_file)) {
+            return res.json({ ...out, error: 'Configured path is outside the allowed data directory.' });
+        }
+        if (!fs.existsSync(svc.cookie_file)) {
+            return res.json({ ...out, exists: false });
+        }
+        const stat = fs.statSync(svc.cookie_file);
+        const raw  = fs.readFileSync(svc.cookie_file, 'utf8').trim();
+        const meta = decodeSupabaseAuthCookie(raw);
+        // Surface the cookie names present in the file so admins can
+        // verify they pasted a complete blob.
+        const cookieNames = raw.split(';').map(s => {
+            const eq = s.indexOf('=');
+            return eq > 0 ? s.slice(0, eq).trim() : null;
+        }).filter(Boolean);
+        return res.json({
+            ...out,
+            exists: true,
+            size_bytes: stat.size,
+            modified_at: stat.mtimeMs,
+            cookie_names: cookieNames,
+            ...meta,
+        });
+    } catch (e) {
+        console.error('cookie-file read error:', e);
+        return res.status(500).json({ error: 'Read failed: ' + e.message });
+    }
+});
+
+// Update cookie file content. Accepts either the full cookie line or
+// just the auth-token value.
+router.put('/services/:id/cookie-file', async (req, res) => {
+    try {
+        const svc = await get('SELECT id, name, cookie_file FROM services WHERE id = ?', [req.params.id]);
+        if (!svc) return res.status(404).json({ error: 'Service not found' });
+        if (!svc.cookie_file) return res.status(400).json({ error: 'This service has no cookie file configured.' });
+        if (!isSafeCookiePath(svc.cookie_file)) {
+            return res.status(400).json({ error: 'Configured cookie file path is unsafe.' });
+        }
+
+        let pasted = (req.body && req.body.cookie || '').toString().trim();
+        if (!pasted) return res.status(400).json({ error: 'Empty paste.' });
+
+        // Strip surrounding quotes and a leading "Cookie:" header, since
+        // admins sometimes copy that whole line from devtools' Network tab.
+        pasted = pasted.replace(/^['"]/, '').replace(/['"]$/, '').trim();
+        pasted = pasted.replace(/^cookie:\s*/i, '');
+
+        // If the paste looks like a bare auth-token value (no "name="),
+        // wrap it with the canonical Supabase cookie name. We auto-detect
+        // the project ref from the existing file so this works for any
+        // Supabase-backed service without hard-coding the ref.
+        if (!/=/.test(pasted) || /^(?:base64-)?eyJ[A-Za-z0-9_-]+\./.test(pasted)) {
+            let ref = 'hicfsbrfkzsxbwayibfm'; // WriteHuman's project — sensible default
+            if (fs.existsSync(svc.cookie_file)) {
+                const existing = fs.readFileSync(svc.cookie_file, 'utf8');
+                const m = /sb-([a-z0-9]+)-auth-token=/i.exec(existing);
+                if (m) ref = m[1];
+            }
+            pasted = `sb-${ref}-auth-token=${pasted}`;
+        }
+
+        // Decode to extract expiry — both for validation and for the UI
+        // to show what the admin just pasted.
+        const meta = decodeSupabaseAuthCookie(pasted);
+        if (!meta.expires_at && !meta.has_refresh_token) {
+            return res.status(400).json({
+                error: 'That does not look like a valid Supabase auth cookie. Make sure you copied the full value of "sb-...-auth-token" (it starts with "base64-eyJ").'
+            });
+        }
+
+        // Atomic write: temp file + rename. Mode 0600 keeps it private.
+        const dir = path.dirname(svc.cookie_file);
+        if (!fs.existsSync(dir)) {
+            return res.status(500).json({ error: 'Data directory does not exist on this host: ' + dir });
+        }
+        const tmp = svc.cookie_file + '.tmp';
+        fs.writeFileSync(tmp, pasted + '\n', { mode: 0o600 });
+        fs.renameSync(tmp, svc.cookie_file);
+        try { fs.chmodSync(svc.cookie_file, 0o600); } catch (_) {}
+
+        return res.json({
+            message: 'Cookie file updated',
+            ...meta,
+            size_bytes: fs.statSync(svc.cookie_file).size,
+        });
+    } catch (e) {
+        console.error('cookie-file write error:', e);
+        return res.status(500).json({ error: 'Write failed: ' + e.message });
     }
 });
 

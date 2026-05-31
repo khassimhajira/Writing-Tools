@@ -167,6 +167,18 @@ function initializeDB() {
         // NULL means "inherit the service's default daily_limit".
         db.run(`ALTER TABLE user_assignments ADD COLUMN daily_limit_override INTEGER`, (err) => {});
 
+        // Server-side cookie file for services that proxy via a "shared
+        // upstream account" (e.g. WriteHuman subdomain proxy). The path
+        // points at a plaintext file on disk that the proxy reads on every
+        // request. Admins paste fresh cookies into the admin UI, which
+        // overwrites this file. NULL = service doesn't use a cookie file
+        // (the default for path-proxy services that get cookies from the
+        // cookies table).
+        db.run(`ALTER TABLE services ADD COLUMN cookie_file TEXT`, (err) => {});
+        // Wire up WriteHuman to its existing cookie file location.
+        db.run(`UPDATE services SET cookie_file = '/home/u124071091/stealth_data/writehuman_cookie.txt'
+                WHERE slug = 'writehuman' AND (cookie_file IS NULL OR cookie_file = '')`, (err) => {});
+
         // Single-active-session enforcement. We stamp users.session_id at every
         // login. The JWT carries the same session_id; verifications that don't
         // match the DB are rejected. New login on another device kicks the old.

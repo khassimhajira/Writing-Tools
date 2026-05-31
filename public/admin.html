@@ -201,6 +201,7 @@
                 <div class="form-group"><label>aMember Product ID</label><input type="text" id="service-amember-id" placeholder="e.g. 5"></div>
                 <div class="form-group"><label>Daily Limit per User <span style="font-size:0.7rem; color:var(--text-secondary);">(POSTs per 24h, blank = unlimited)</span></label><input type="number" min="0" step="1" id="service-daily-limit" placeholder="e.g. 6"></div>
                 <div class="form-group" style="grid-column: 1 / -1;"><label>Billable Path <span style="font-size:0.7rem; color:var(--text-secondary);">(only requests whose URL contains this string count toward the cap. blank = nothing counts)</span></label><input type="text" id="service-billable-path" placeholder="/api/humanize"></div>
+                <div class="form-group" style="grid-column: 1 / -1;"><label>Cookie File Path <span style="font-size:0.7rem; color:var(--text-secondary);">(advanced: server-side file used by subdomain proxies like WriteHuman. Leave blank for normal services.)</span></label><input type="text" id="service-cookie-file" placeholder="/home/u124071091/stealth_data/writehuman_cookie.txt"></div>
                 <div class="form-group" style="grid-column: 1 / -1;"><label>Target URL</label><input type="url" id="service-url" required placeholder="https://chat.openai.com"></div>
                 <div class="form-group" style="grid-column: 1 / -1;">
                     <label>Icon Preview</label>
@@ -240,6 +241,53 @@
             <div id="usage-table" style="margin-top:1.5rem; max-height:60vh; overflow:auto;"></div>
             <div style="display:flex; gap:1rem; margin-top:1.5rem; justify-content:flex-end;">
                 <button id="usage-clear-all-btn" onclick="clearAllUsage()" style="width:auto; padding:6px 12px; background:#f87171; font-size:11px;">CLEAR ALL FOR THIS SERVICE</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- COOKIE FILE MODAL -->
+    <div id="cookie-file-modal" class="modal-overlay">
+        <div class="card modal-card" style="width:760px; max-width:95vw;">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:1rem;">
+                <div>
+                    <h3 style="margin:0;">Manage Cookies: <span id="cf-service-name" style="color:#a855f7;"></span></h3>
+                    <p style="margin:6px 0 0; font-size:0.8rem; color:var(--text-secondary);">Paste fresh cookies from your paid account so the proxy keeps working for everyone.</p>
+                </div>
+                <button onclick="closeCookieFileModal()" style="width:auto; padding:4px 10px; background:var(--input-bg);">Close</button>
+            </div>
+
+            <!-- Status panel -->
+            <div id="cf-status" style="margin-top:1.25rem; padding:14px 16px; border-radius:10px; border:1px solid var(--border-color); background:var(--input-bg);">
+                <p style="margin:0; font-size:0.85rem; color:var(--text-secondary);">Loading current status…</p>
+            </div>
+
+            <!-- How-to -->
+            <details style="margin-top:1.25rem; border:1px solid var(--border-color); border-radius:10px; padding:12px 16px;">
+                <summary style="cursor:pointer; font-weight:700; font-size:0.85rem;">📖 How to get fresh cookies (5 minutes)</summary>
+                <ol style="margin:12px 0 0; padding-left:18px; font-size:0.82rem; line-height:1.65; color:var(--text-secondary);">
+                    <li>Open the upstream site in a normal Chrome / Edge / Firefox tab and log in with the paid account.</li>
+                    <li>Press <b>F12</b> to open DevTools.</li>
+                    <li>Click the <b>Application</b> tab (or <b>Storage</b> in Firefox).</li>
+                    <li>Expand <b>Cookies</b> in the left sidebar, click the upstream domain.</li>
+                    <li>Find the row whose name starts with <code style="background:rgba(124,58,237,0.15); padding:1px 5px; border-radius:4px;">sb-…-auth-token</code>. Click it.</li>
+                    <li>Copy the entire <b>Value</b> column (it starts with <code>base64-eyJ</code> and is very long).</li>
+                    <li>Paste it into the box below and click <b>Save</b>.</li>
+                </ol>
+                <p style="margin:14px 0 0; font-size:0.78rem; color:var(--text-secondary);">Tip: pasting just the auth-token is enough. The system auto-detects the cookie name. If you also have <code>sb-session-token</code> and <code>wh_anon_id</code>, paste the full <code>name=value; name=value; …</code> line for the most complete handoff.</p>
+            </details>
+
+            <!-- Paste -->
+            <div class="form-group" style="margin-top:1.25rem;">
+                <label style="font-size:0.85rem;">Paste cookies here</label>
+                <textarea id="cf-paste" style="height:160px; font-family:monospace; font-size:0.78rem; line-height:1.4;"
+                    placeholder="sb-...-auth-token=base64-eyJhbGciOi...&#10;&#10;OR paste the full Cookie line (multiple cookies separated by ; )"></textarea>
+            </div>
+
+            <div id="cf-result" style="display:none; padding:10px 14px; border-radius:8px; margin-top:0.5rem; font-size:0.85rem;"></div>
+
+            <div style="display:flex; gap:0.75rem; margin-top:1rem; justify-content:flex-end;">
+                <button type="button" onclick="closeCookieFileModal()" style="width:auto; background:var(--input-bg);">Cancel</button>
+                <button type="button" id="cf-save-btn" onclick="saveCookieFile()" style="width:auto; background:linear-gradient(135deg,#7c3aed,#a855f7);">Save Cookies</button>
             </div>
         </div>
     </div>
@@ -377,6 +425,7 @@
 
                         <div style="display:flex; gap:8px;">
                             <button onclick="openUsageModal(${s.id})" style="width:auto; padding:4px 8px; font-size:10px; background:var(--input-bg);">USAGE</button>
+                            ${s.cookie_file ? `<button onclick="openCookieFileModal(${s.id})" style="width:auto; padding:4px 8px; font-size:10px; background:linear-gradient(135deg,#7c3aed,#a855f7);">🍪 COOKIES</button>` : ''}
                             <button onclick="editService(${s.id})" style="width:auto; padding:4px 8px; font-size:10px;">EDIT</button>
                             <button onclick="deleteService(${s.id})" style="width:auto; padding:4px 8px; font-size:10px; background:#f87171;">DEL</button>
                         </div>
@@ -516,6 +565,7 @@
             document.getElementById('service-amember-id').value = s.amember_product_id || '';
             document.getElementById('service-daily-limit').value = (s.daily_limit && s.daily_limit > 0) ? s.daily_limit : '';
             document.getElementById('service-billable-path').value = s.billable_path || '';
+            document.getElementById('service-cookie-file').value = s.cookie_file || '';
             updateIconPreview(s.icon_svg || '');
             openServiceModal(true); // Pass true to indicate it is an edit
         }
@@ -537,7 +587,8 @@
                     const n = parseInt(raw, 10);
                     return (Number.isFinite(n) && n > 0) ? n : null;
                 })(),
-                billable_path: document.getElementById('service-billable-path').value.trim()
+                billable_path: document.getElementById('service-billable-path').value.trim(),
+                cookie_file: document.getElementById('service-cookie-file').value.trim()
             };
             const method = id ? 'PUT' : 'POST', url = id ? `/hub/api/admin/services/${id}` : '/hub/api/admin/services';
             const res = await fetch(url, { method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
@@ -727,6 +778,122 @@
                 }
             } catch(e) {
                 showAlert('Rebalance failed: ' + e.message, 'error');
+            }
+        }
+
+        // ---- Cookie File Modal (server-side cookies for subdomain proxies) ----
+        let _cfServiceId = null;
+        function openCookieFileModal(sid) {
+            _cfServiceId = sid;
+            const svc = services.find(x => x.id === sid);
+            document.getElementById('cf-service-name').innerText = svc ? svc.name : ('#' + sid);
+            document.getElementById('cf-paste').value = '';
+            document.getElementById('cf-result').style.display = 'none';
+            document.getElementById('cookie-file-modal').style.display = 'flex';
+            refreshCookieFileStatus();
+        }
+        function closeCookieFileModal() {
+            document.getElementById('cookie-file-modal').style.display = 'none';
+            _cfServiceId = null;
+        }
+        function _cfFmtDate(ms) {
+            try {
+                const d = new Date(ms);
+                return d.toLocaleString();
+            } catch (_) { return '?'; }
+        }
+        function _cfFmtRelative(secondsFromNow) {
+            const abs = Math.abs(secondsFromNow);
+            const past = secondsFromNow < 0;
+            const h = Math.floor(abs / 3600);
+            const m = Math.floor((abs % 3600) / 60);
+            const txt = h > 0 ? `${h}h ${m}m` : `${m}m`;
+            return past ? `expired ${txt} ago` : `valid for ${txt}`;
+        }
+        async function refreshCookieFileStatus() {
+            const box = document.getElementById('cf-status');
+            box.innerHTML = '<p style="margin:0; font-size:0.85rem; color:var(--text-secondary);">Loading current status…</p>';
+            try {
+                const r = await fetch(`/hub/api/admin/services/${_cfServiceId}/cookie-file`, { cache: 'no-store' });
+                const d = await r.json();
+                if (!r.ok) {
+                    box.innerHTML = `<p style="margin:0; color:#f87171;">Status check failed: ${d.error || r.statusText}</p>`;
+                    return;
+                }
+                if (!d.configured) {
+                    box.innerHTML = '<p style="margin:0; color:#f59e0b;">No cookie file path is configured for this service. Edit the service and set the "Cookie File Path" field first.</p>';
+                    return;
+                }
+                if (!d.exists) {
+                    box.innerHTML = `<div><p style="margin:0 0 6px; color:#f59e0b; font-weight:700;">⚠ Cookie file not found yet</p>
+                        <p style="margin:0; font-size:0.78rem; color:var(--text-secondary);">Path: <code>${d.path}</code></p>
+                        <p style="margin:8px 0 0; font-size:0.82rem;">Paste the first set of cookies below to create it.</p></div>`;
+                    return;
+                }
+                const now = Date.now() / 1000;
+                const ea = d.expires_at || 0;
+                const sec = ea - now;
+                const tone = sec > 600 ? '#10b981' : (sec > 0 ? '#f59e0b' : '#f87171');
+                const label = sec > 0 ? 'ACTIVE' : 'EXPIRED';
+                const accountLine = d.email
+                    ? `<p style="margin:0; font-size:0.82rem;">Logged in as: <b>${d.full_name || d.email}</b> <span style="color:var(--text-secondary);">(${d.email})</span></p>`
+                    : '<p style="margin:0; font-size:0.82rem; color:var(--text-secondary);">Account info not decodable.</p>';
+                const cookieList = (d.cookie_names || []).map(n => `<code style="background:rgba(124,58,237,0.15); padding:1px 5px; border-radius:4px; margin-right:4px; font-size:0.72rem;">${n}</code>`).join('');
+                box.innerHTML = `
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; flex-wrap:wrap;">
+                        <div style="flex:1; min-width:240px;">
+                            <p style="margin:0 0 6px; font-weight:700; color:${tone};">${label} — ${_cfFmtRelative(sec)}</p>
+                            ${accountLine}
+                            <p style="margin:6px 0 0; font-size:0.74rem; color:var(--text-secondary);">Access token expires: ${ea ? _cfFmtDate(ea*1000) : '?'}</p>
+                            <p style="margin:2px 0 0; font-size:0.74rem; color:var(--text-secondary);">File last written: ${_cfFmtDate(d.modified_at)} · ${d.size_bytes} bytes</p>
+                        </div>
+                    </div>
+                    <div style="margin-top:10px;">
+                        <p style="margin:0 0 4px; font-size:0.72rem; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.06em;">Cookies present</p>
+                        <div>${cookieList || '<span style="color:var(--text-secondary); font-size:0.78rem;">none parsed</span>'}</div>
+                    </div>`;
+            } catch (e) {
+                box.innerHTML = `<p style="margin:0; color:#f87171;">Status check failed: ${e.message}</p>`;
+            }
+        }
+        async function saveCookieFile() {
+            const btn = document.getElementById('cf-save-btn');
+            const result = document.getElementById('cf-result');
+            const cookie = document.getElementById('cf-paste').value.trim();
+            if (!cookie) { showAlert('Paste cookies first', 'error'); return; }
+            btn.disabled = true; btn.innerText = 'Saving…';
+            result.style.display = 'none';
+            try {
+                const r = await fetch(`/hub/api/admin/services/${_cfServiceId}/cookie-file`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ cookie })
+                });
+                const d = await r.json();
+                if (!r.ok) {
+                    result.style.display = 'block';
+                    result.style.background = 'rgba(248,113,113,0.12)';
+                    result.style.color = '#f87171';
+                    result.style.border = '1px solid rgba(248,113,113,0.35)';
+                    result.innerText = d.error || ('Save failed: ' + r.statusText);
+                } else {
+                    result.style.display = 'block';
+                    result.style.background = 'rgba(16,185,129,0.12)';
+                    result.style.color = '#10b981';
+                    result.style.border = '1px solid rgba(16,185,129,0.35)';
+                    const exp = d.expires_at ? ` (valid until ${_cfFmtDate(d.expires_at*1000)})` : '';
+                    result.innerText = '✓ Saved' + exp + (d.email ? ' — account: ' + d.email : '');
+                    document.getElementById('cf-paste').value = '';
+                    refreshCookieFileStatus();
+                }
+            } catch (e) {
+                result.style.display = 'block';
+                result.style.background = 'rgba(248,113,113,0.12)';
+                result.style.color = '#f87171';
+                result.style.border = '1px solid rgba(248,113,113,0.35)';
+                result.innerText = 'Save failed: ' + e.message;
+            } finally {
+                btn.disabled = false; btn.innerText = 'Save Cookies';
             }
         }
         document.getElementById('cookie-form').onsubmit = async (e) => { e.preventDefault(); const payload = { service_id: parseInt(document.getElementById('cookie-service-id').value), name: document.getElementById('cookie-name').value, data: document.getElementById('cookie-data').value }; await fetch('/hub/api/admin/cookies', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) }); e.target.reset(); loadData(); };
