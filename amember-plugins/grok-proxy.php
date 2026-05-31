@@ -186,30 +186,46 @@ if (preg_match('#^/cdn-cgi/#', $path) || preg_match('#^/monitoring(\?|$)#', $pat
 // ---------------- assets.grok.com proxy ----------------
 // Frontend code that points at the assets CDN (avatars, static images,
 // etc.) gets rewritten to /__grok_assets/... in our HTML rewriter. We
-// rewrite the path back here and forward to the real CDN.
+// rewrite the path back here and forward to the real CDN. Some assets
+// (avatars, private uploads) require auth, so we forward the upstream
+// session cookies too.
 if (preg_match('#^/__grok_assets(/.*)?$#', $path, $assetMatch)) {
     $assetPath = $assetMatch[1] ?? '/';
     $assetUrl  = 'https://assets.grok.com' . $assetPath;
+    $upstreamCookieForAsset = '';
+    if (is_readable($COOKIE_FILE)) $upstreamCookieForAsset = trim(file_get_contents($COOKIE_FILE));
+    $assetHeaders = [
+        'User-Agent: ' . ($_SERVER['HTTP_USER_AGENT'] ?? 'Mozilla/5.0'),
+        'Accept: image/avif,image/webp,*/*',
+        'Referer: https://grok.com/',
+        'Origin: https://grok.com',
+    ];
+    if ($upstreamCookieForAsset !== '') $assetHeaders[] = 'Cookie: ' . $upstreamCookieForAsset;
     $ach = curl_init($assetUrl);
     curl_setopt_array($ach, [
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_HEADER         => false,
         CURLOPT_FOLLOWLOCATION => true,
         CURLOPT_TIMEOUT        => 30,
-        CURLOPT_HTTPHEADER     => [
-            'User-Agent: ' . ($_SERVER['HTTP_USER_AGENT'] ?? 'Mozilla/5.0'),
-            'Accept: image/avif,image/webp,*/*',
-            'Referer: https://grok.com/',
-        ],
+        CURLOPT_HTTPHEADER     => $assetHeaders,
     ]);
     $assetBody = curl_exec($ach);
     $assetStatus = curl_getinfo($ach, CURLINFO_HTTP_CODE);
     $assetCT = curl_getinfo($ach, CURLINFO_CONTENT_TYPE);
     curl_close($ach);
+    // If the CDN rejects (403 etc.), serve a transparent 1×1 PNG so the
+    // browser doesn\'t flag a broken image.
+    if ($assetStatus < 200 || $assetStatus >= 300) {
+        http_response_code(200);
+        header('Content-Type: image/png');
+        header('Cache-Control: public, max-age=300');
+        echo base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=');
+        exit;
+    }
     http_response_code($assetStatus);
     if ($assetCT) header('Content-Type: ' . $assetCT);
     header('Cache-Control: public, max-age=86400');
-    if ($assetBody !== false) echo $assetBody;
+    echo $assetBody;
     exit;
 }
 
@@ -471,26 +487,16 @@ if ($isHtml && $body !== '') {
         . 'setUser:function(){},setTag:function(){},setExtra:function(){},setContext:function(){},'
         . 'getCurrentHub:function(){return{getClient:function(){return null;},getScope:function(){return{setTag:function(){},setUser:function(){}};}};}'
         . '};}catch(e){}'
-        // Swallow stream-related errors that bubble up to React\'s error
-        // boundary. Our PHP proxy buffers responses, which means any RSC
-        // streaming fetch on the upstream looks "closed" before the
-        // client expects. Catching the error at window level lets the
-        // page keep rendering even when streaming fails.
-        . 'try{var BAD=/connection closed|aborted|network error|failed to fetch|stream/i;'
+        // Capture errors so they\'re visible in DevTools as a structured
+        // log line, even if React\'s own boundary swallows them. Helps
+        // us diagnose what\'s actually triggering "Something went wrong".
+        . 'try{var BAD_NOOP=/^xx_does_not_match$/;'
         . 'window.addEventListener("error",function(e){'
-            . 'if(e && e.message && BAD.test(e.message)){e.preventDefault();e.stopImmediatePropagation();return false;}'
+            . 'try{console.warn("[grok-proxy.error]",e&&e.message,e&&e.filename,e&&(e.lineno+":"+e.colno),e&&e.error&&e.error.stack);}catch(_){}'
         . '},true);'
         . 'window.addEventListener("unhandledrejection",function(e){'
-            . 'try{var msg=(e&&e.reason)?(e.reason.message||String(e.reason)):"";'
-            . 'if(BAD.test(msg)){e.preventDefault();return false;}}catch(_){}'
+            . 'try{var r=e&&e.reason; console.warn("[grok-proxy.unhandled]", r&&r.message||String(r), r&&r.stack||"");}catch(_){}'
         . '});'
-        // Also wrap console.error so React doesn\'t see "Connection closed"
-        // in its error-recording path.
-        . 'var _origCE=console.error;console.error=function(){'
-            . 'try{var s=Array.prototype.slice.call(arguments).map(String).join(" ");'
-            . 'if(BAD.test(s))return;}catch(_){}'
-            . 'return _origCE.apply(console,arguments);'
-        . '};'
         . '}catch(e){}'
         // Swallow Cloudflare RUM beacons. The minified JS posts to
         // /cdn-cgi/rum on every interaction; if the response isn\'t 200,
