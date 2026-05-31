@@ -40,6 +40,55 @@ $COOKIE_FILE    = '/home/u124071091/stealth_data/grok_cookie.txt';
 $AUTH_GATE_URL  = 'https://tools.scholargenie.org/hub/api/auth/me';
 $PROXY_HOST     = $_SERVER['HTTP_HOST'] ?? 'grok.scholargenie.org';
 
+// Helper: forward upstream response headers, stripping framing-killers
+// and rewriting Set-Cookie / Location. Used in both buffered and
+// streaming modes.
+function _forward_response_headers($headerLines) {
+    global $PROXY_HOST;
+    foreach ($headerLines as $line) {
+        if ($line === '' || stripos($line, 'HTTP/') === 0) continue;
+        $low = strtolower($line);
+        if (str_starts_with($low, 'content-encoding:'))                 continue;
+        if (str_starts_with($low, 'transfer-encoding:'))                continue;
+        if (str_starts_with($low, 'content-length:'))                   continue;
+        if (str_starts_with($low, 'content-security-policy:'))          continue;
+        if (str_starts_with($low, 'content-security-policy-report-only:')) continue;
+        if (str_starts_with($low, 'x-frame-options:'))                  continue;
+        if (str_starts_with($low, 'cross-origin-opener-policy:'))       continue;
+        if (str_starts_with($low, 'cross-origin-embedder-policy:'))     continue;
+        if (str_starts_with($low, 'cross-origin-resource-policy:'))     continue;
+        if (str_starts_with($low, 'permissions-policy:'))               continue;
+        if (str_starts_with($low, 'report-to:'))                        continue;
+        if (str_starts_with($low, 'reporting-endpoints:'))              continue;
+        if (str_starts_with($low, 'document-policy:'))                  continue;
+
+        if (str_starts_with($low, 'set-cookie:')) {
+            $rewritten = preg_replace('/;\s*Domain=[^;]+/i', '', $line);
+            $rewritten = preg_replace('/;\s*SameSite=Strict/i', '; SameSite=Lax', $rewritten);
+            header($rewritten, false);
+            continue;
+        }
+        if (str_starts_with($low, 'location:')) {
+            $rewritten = preg_replace('#https?://grok\.com#i', 'https://' . $PROXY_HOST, $line);
+            header($rewritten, false);
+            continue;
+        }
+        header($line, false);
+    }
+}
+
+function _isRewritable($contentType) {
+    $ct = strtolower($contentType);
+    return (
+        strpos($ct, 'text/html') !== false ||
+        strpos($ct, 'application/json') !== false ||
+        strpos($ct, 'application/javascript') !== false ||
+        strpos($ct, 'text/javascript') !== false ||
+        strpos($ct, 'text/css') !== false ||
+        strpos($ct, 'text/x-component') !== false
+    );
+}
+
 // Grok is behind Cloudflare bot challenges. Hostinger's datacenter IP
 // gets 403'd ("Just a moment..."). We route every upstream request
 // through a residential proxy from the rotating pool — same proxies
@@ -134,6 +183,36 @@ if (preg_match('#^/cdn-cgi/#', $path) || preg_match('#^/monitoring(\?|$)#', $pat
     exit;
 }
 
+// ---------------- assets.grok.com proxy ----------------
+// Frontend code that points at the assets CDN (avatars, static images,
+// etc.) gets rewritten to /__grok_assets/... in our HTML rewriter. We
+// rewrite the path back here and forward to the real CDN.
+if (preg_match('#^/__grok_assets(/.*)?$#', $path, $assetMatch)) {
+    $assetPath = $assetMatch[1] ?? '/';
+    $assetUrl  = 'https://assets.grok.com' . $assetPath;
+    $ach = curl_init($assetUrl);
+    curl_setopt_array($ach, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HEADER         => false,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_TIMEOUT        => 30,
+        CURLOPT_HTTPHEADER     => [
+            'User-Agent: ' . ($_SERVER['HTTP_USER_AGENT'] ?? 'Mozilla/5.0'),
+            'Accept: image/avif,image/webp,*/*',
+            'Referer: https://grok.com/',
+        ],
+    ]);
+    $assetBody = curl_exec($ach);
+    $assetStatus = curl_getinfo($ach, CURLINFO_HTTP_CODE);
+    $assetCT = curl_getinfo($ach, CURLINFO_CONTENT_TYPE);
+    curl_close($ach);
+    http_response_code($assetStatus);
+    if ($assetCT) header('Content-Type: ' . $assetCT);
+    header('Cache-Control: public, max-age=86400');
+    if ($assetBody !== false) echo $assetBody;
+    exit;
+}
+
 // Parse individual cookies so we can plant them on our subdomain via
 // Set-Cookie. Grok's frontend reads its session from document.cookie
 // on the client, exactly like Supabase does for WriteHuman.
@@ -189,46 +268,138 @@ $forwardHeaders[] = 'Accept-Encoding: identity';
 $body = file_get_contents('php://input');
 
 // ---------------- Execute via cURL ----------------
+// ---------------- Execute via cURL ----------------
+//
+// Two-mode strategy:
+//
+//   * For requests we KNOW need body rewriting (HTML, JSON, JS, CSS),
+//     we buffer the full response, rewrite, and emit. This is the
+//     classic mode and is used for the document path on first load.
+//
+//   * For everything else (streaming RSC `text/x-component`, SSE event
+//     streams, opaque chunked responses, large media), we stream chunks
+//     to the browser as they arrive using CURLOPT_WRITEFUNCTION. This is
+//     critical for Grok\'s chat surface: token-by-token streaming through
+//     a buffered proxy looks like "connection closed" to the React tree.
+//
+// Decide the mode from the request path. Document fetches and known
+// rewrite-needed endpoints use buffered mode; everything else streams.
+// We resolve content-type from the response headers in streaming mode
+// AFTER receiving them, falling back to "stream" for ambiguous cases.
+
+$pathLooksDoc = (
+    $path === '/' ||
+    $path === '' ||
+    preg_match('#^/[^./?]*/?(\?|$)#', $path)  // /foo, /foo/bar, no extension
+);
+
+// We can\'t know the content-type ahead of time for arbitrary requests,
+// so we make a single cURL call but use a streaming writer that buffers
+// only when the response is rewriteable. The writer collects header
+// bytes first, decides streaming vs buffering, and dispatches.
+
+$_streamMode    = null;     // null until we know
+$_streamBuffer  = '';
+$_responseHeaders = [];
+$_statusEmitted = false;
+$_responseStatus = 200;
+
 $ch = curl_init($upstreamUrl);
 curl_setopt_array($ch, [
     CURLOPT_CUSTOMREQUEST  => $method,
     CURLOPT_HTTPHEADER     => $forwardHeaders,
     CURLOPT_POSTFIELDS     => $body !== '' ? $body : null,
-    CURLOPT_RETURNTRANSFER => true,
-    CURLOPT_HEADER         => true,
     CURLOPT_FOLLOWLOCATION => false,
-    CURLOPT_TIMEOUT        => 60,
-    CURLOPT_CONNECTTIMEOUT => 8,
+    CURLOPT_TIMEOUT        => 120,
+    CURLOPT_CONNECTTIMEOUT => 10,
     CURLOPT_SSL_VERIFYPEER => true,
     CURLOPT_SSL_VERIFYHOST => 2,
+    // Header callback: collect, then on first body byte decide mode.
+    CURLOPT_HEADERFUNCTION => function ($ch, $line) use (&$_responseHeaders, &$_responseStatus) {
+        $trim = trim($line);
+        if ($trim === '') return strlen($line);
+        if (preg_match('#^HTTP/[\d.]+ (\d+)#', $trim, $m)) {
+            $_responseStatus = (int)$m[1];
+            $_responseHeaders = [];   // reset on redirect chain
+            return strlen($line);
+        }
+        $_responseHeaders[] = $trim;
+        return strlen($line);
+    },
+    // Body writer: decides mode on first chunk. Streams or buffers.
+    CURLOPT_WRITEFUNCTION => function ($ch, $chunk) use (
+        &$_streamMode, &$_streamBuffer, &$_responseHeaders, &$_statusEmitted, &$_responseStatus, &$_isStreamRewritable
+    ) {
+        if ($_streamMode === null) {
+            // Determine mode from headers we collected.
+            $contentType = '';
+            foreach ($_responseHeaders as $h) {
+                if (stripos($h, 'content-type:') === 0) {
+                    $contentType = substr($h, 13);
+                    break;
+                }
+            }
+            $rewritable = _isRewritable($contentType);
+            $_streamMode = $rewritable ? 'buffer' : 'stream';
+
+            if ($_streamMode === 'stream') {
+                // Emit headers immediately so the client can start parsing.
+                http_response_code($_responseStatus);
+                _forward_response_headers($_responseHeaders);
+                // Disable PHP-level output buffering so flush() goes to the wire.
+                if (function_exists('ob_implicit_flush')) ob_implicit_flush(true);
+                while (ob_get_level() > 0) ob_end_flush();
+                $_statusEmitted = true;
+            }
+        }
+
+        if ($_streamMode === 'stream') {
+            echo $chunk;
+            if (function_exists('flush')) @flush();
+            return strlen($chunk);
+        } else {
+            $_streamBuffer .= $chunk;
+            return strlen($chunk);
+        }
+    },
 ]);
-// Route through residential proxy if configured. Format: http://user:pass@host:port
 if ($UPSTREAM_PROXY) {
     curl_setopt($ch, CURLOPT_PROXY, $UPSTREAM_PROXY);
-    // Be patient with residential proxies (variable latency).
-    curl_setopt($ch, CURLOPT_TIMEOUT, 90);
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 20);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 180);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 25);
 }
 
-$response   = curl_exec($ch);
-$status     = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-$headerSize = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
-$err        = curl_error($ch);
+$execOk = curl_exec($ch);
+$err    = curl_error($ch);
 curl_close($ch);
 
 if ($err) {
-    http_response_code(502);
-    header('Content-Type: text/html; charset=utf-8');
-    echo '<div style="font-family:sans-serif;text-align:center;padding:14% 20px;">'
-       . '<h2 style="color:#0f0720;">Service unavailable</h2>'
-       . '<p>Grok cannot be reached right now. Please try again in a moment.</p>'
-       . '</div>';
+    if (!$_statusEmitted) {
+        http_response_code(502);
+        header('Content-Type: text/html; charset=utf-8');
+        echo '<div style="font-family:sans-serif;text-align:center;padding:14% 20px;">'
+           . '<h2 style="color:#0f0720;">Service unavailable</h2>'
+           . '<p>Grok cannot be reached right now. Please try again in a moment.</p>'
+           . '</div>';
+    }
     error_log('[grok-proxy] curl error: ' . $err);
     exit;
 }
 
-$rawHeaders = substr($response, 0, $headerSize);
-$body       = substr($response, $headerSize);
+// In stream mode we already emitted the body. Done.
+if ($_streamMode === 'stream') exit;
+
+// In buffer mode we still need to rewrite + send.
+$body = $_streamBuffer;
+$status = $_responseStatus;
+$rawHeaders = implode("\r\n", $_responseHeaders);
+
+// If the response was empty (e.g. 204), skip rewrites entirely.
+if ($body === '' || $body === false) {
+    http_response_code($status);
+    _forward_response_headers($_responseHeaders);
+    exit;
+}
 
 // ---------------- Detect content type ----------------
 $contentTypeHeader = '';
@@ -247,6 +418,9 @@ if (($isHtml || $isJson || $isJs || $isCss || $isRsc) && $body !== '') {
     $body = str_replace('http://grok.com',   'https://' . $PROXY_HOST, $body);
     $body = str_replace('//grok.com',        '//' . $PROXY_HOST,       $body);
     $body = str_replace('https:\\/\\/grok.com', 'https:\\/\\/' . $PROXY_HOST, $body);
+    // Also rewrite the assets CDN so avatars/static load through us.
+    $body = str_replace('https://assets.grok.com',  'https://' . $PROXY_HOST . '/__grok_assets', $body);
+    $body = str_replace('https:\\/\\/assets.grok.com', 'https:\\/\\/' . $PROXY_HOST . '\\/__grok_assets', $body);
 
     // Neutralize generic hostname-guard IIFEs that redirect to grok.com.
     $body = preg_replace(
@@ -411,41 +585,9 @@ if ($isHtml && $body !== '') {
     );
 }
 
-// ---------------- Forward upstream headers ----------------
+// ---------------- Forward upstream headers (buffer mode only) ----------------
 http_response_code($status);
-foreach (preg_split("/\r?\n/", $rawHeaders) as $line) {
-    if ($line === '' || stripos($line, 'HTTP/') === 0) continue;
-    $low = strtolower($line);
-
-    if (str_starts_with($low, 'content-encoding:'))                 continue;
-    if (str_starts_with($low, 'transfer-encoding:'))                continue;
-    if (str_starts_with($low, 'content-length:'))                   continue;
-    if (str_starts_with($low, 'content-security-policy:'))          continue;
-    if (str_starts_with($low, 'content-security-policy-report-only:')) continue;
-    if (str_starts_with($low, 'x-frame-options:'))                  continue;
-    if (str_starts_with($low, 'cross-origin-opener-policy:'))       continue;
-    if (str_starts_with($low, 'cross-origin-embedder-policy:'))     continue;
-    if (str_starts_with($low, 'cross-origin-resource-policy:'))     continue;
-    if (str_starts_with($low, 'permissions-policy:'))               continue;
-    if (str_starts_with($low, 'report-to:'))                        continue;
-    if (str_starts_with($low, 'reporting-endpoints:'))              continue;
-    if (str_starts_with($low, 'document-policy:'))                  continue;
-
-    if (str_starts_with($low, 'set-cookie:')) {
-        $rewritten = preg_replace('/;\s*Domain=[^;]+/i', '', $line);
-        $rewritten = preg_replace('/;\s*SameSite=Strict/i', '; SameSite=Lax', $rewritten);
-        header($rewritten, false);
-        continue;
-    }
-
-    if (str_starts_with($low, 'location:')) {
-        $rewritten = preg_replace('#https?://grok\.com#i', 'https://' . $PROXY_HOST, $line);
-        header($rewritten, false);
-        continue;
-    }
-
-    header($line, false);
-}
+_forward_response_headers($_responseHeaders);
 
 if ($isHtml) {
     header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
