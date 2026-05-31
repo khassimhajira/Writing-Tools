@@ -1,37 +1,27 @@
 <?php
 /**
- * Grok transparent proxy — sibling to writehuman-proxy.php.
+ * Grok transparent proxy v3 — full streaming, no body rewrites.
  *
- * Drops onto the `grok.scholargenie.org` subdomain folder and forwards
- * every request to grok.com while injecting the shared authenticated
- * cookies (sso, sso-rw, x-anonuserid) from a server-side file.
+ * Architectural lessons from v1/v2:
  *
- * What this proxy must defeat:
+ *   * Buffering ANY response (HTML included) breaks Grok\'s React-Server-
+ *     Component parser. RSC payloads are embedded in the streaming HTML
+ *     as `<script>self.__next_f.push([...])</script>` blocks containing
+ *     length-prefixed JSON. str_replace() over the body desyncs those
+ *     prefixes → "Connection closed" at module-evaluation time.
  *
- *   1. Grok's bundle ships an inline hostname guard similar to
- *      writehuman.ai. We override window.location.hostname BEFORE any
- *      script runs, AND zap the literal IIFE via regex.
+ *   * Solution: stream EVERY response chunk-for-chunk to the browser.
+ *     For HTML we still need a one-time `<head>` script injection — we
+ *     do that at the wire level by buffering only the first ~16KB until
+ *     we see `<head>`, then flushing once with the injection appended,
+ *     and streaming the rest of the body verbatim.
  *
- *   2. Sentry session-replay tries to instrument the page and crashes
- *      when our proxy origin doesn't match the configured DSN. We stub
- *      out window.Sentry early.
+ *   * URL rewriting is handled CLIENT-SIDE by our injected fetch / XHR /
+ *     WebSocket interceptor. Server never touches the body bytes.
  *
- *   3. CSP / X-Frame-Options / framing headers — stripped so the
- *      iframe is allowed to render.
- *
- *   4. Absolute URLs to https://grok.com / https://x.com — rewritten to
- *      our proxy origin.
- *
- *   5. Account / billing / pricing UI — hidden via injected stylesheet
- *      so students can't escape the chat surface.
- *
- * Drop this file as `index.php` inside the subdomain document root:
- *   /home/u124071091/domains/scholargenie.org/public_html/grok/index.php
- *
- * Cookie source file:
- *   /home/u124071091/stealth_data/grok_cookie.txt
- *   (plaintext, single line, full Cookie header value with at least
- *   `sso=...; sso-rw=...; x-anonuserid=...`).
+ *   * cdn.grok.com chunks are NOT proxied — Cloudflare bot-protection
+ *     blocks proxy IPs but accepts the user\'s real browser. We let the
+ *     browser fetch directly from the CDN.
  */
 
 // ---------------- Config ----------------
@@ -41,8 +31,7 @@ $AUTH_GATE_URL  = 'https://tools.scholargenie.org/hub/api/auth/me';
 $PROXY_HOST     = $_SERVER['HTTP_HOST'] ?? 'grok.scholargenie.org';
 
 // Helper: forward upstream response headers, stripping framing-killers
-// and rewriting Set-Cookie / Location. Used in both buffered and
-// streaming modes.
+// and rewriting Set-Cookie / Location.
 function _forward_response_headers($headerLines) {
     global $PROXY_HOST;
     foreach ($headerLines as $line) {
@@ -77,28 +66,14 @@ function _forward_response_headers($headerLines) {
     }
 }
 
-function _isRewritable($contentType) {
-    // Only HTML needs server-side rewriting (it\'s the only doc the
-    // browser parses with absolute URLs that aren\'t intercepted by
-    // our fetch shim). Everything else streams to keep RSC, SSE, JSON
-    // streams, and chat tokens flowing chunk-by-chunk. The client-side
-    // fetch interceptor handles URL rewriting at request time.
-    $ct = strtolower($contentType);
-    return strpos($ct, 'text/html') !== false;
-}
-
-// Grok is behind Cloudflare bot challenges. Hostinger's datacenter IP
-// gets 403'd ("Just a moment..."). We route every upstream request
-// through a residential proxy from the rotating pool — same proxies
-// the Node app uses for stealthwriter.
+// Sticky residential proxy pool — Cloudflare bot-protection on grok.com
+// 403s Hostinger\'s datacenter IP. Each visitor sticks to one exit IP
+// per day for session-cookie consistency.
 $PROXY_POOL_FILE = '/home/u124071091/stealth_data/grok_upstream_proxies.txt';
 $UPSTREAM_PROXY  = '';
 if (is_readable($PROXY_POOL_FILE)) {
     $proxies = array_filter(array_map('trim', file($PROXY_POOL_FILE)));
     if (!empty($proxies)) {
-        // Sticky-ish: pick by visitor IP + day so the same student keeps
-        // hitting the same exit IP for the day. Reduces Cloudflare risk
-        // scores and keeps Grok's session-cookie heuristics happy.
         $key = ($_SERVER['REMOTE_ADDR'] ?? '0') . ':' . date('Y-m-d');
         $idx = abs(crc32($key)) % count($proxies);
         $UPSTREAM_PROXY = $proxies[$idx];
@@ -158,21 +133,7 @@ if ($isDocumentNav) {
     }
 }
 
-// ---------------- Read shared upstream cookie ----------------
-$upstreamCookie = '';
-if (is_readable($COOKIE_FILE)) {
-    $upstreamCookie = trim(file_get_contents($COOKIE_FILE));
-}
-
 // ---------------- Cloudflare /cdn-cgi/* short-circuit ----------------
-// Cloudflare auto-injects scripts that POST telemetry to /cdn-cgi/rum,
-// /cdn-cgi/speedbrain, /cdn-cgi/zaraz, etc. On grok.com these endpoints
-// are served by Cloudflare directly (not the origin), but our subdomain
-// only has Cloudflare's basic CDN — those paths return 404. Some of
-// Grok's bundled JS treats a 404 here as a fatal error and trips the
-// React error boundary ("Something went wrong"). Returning a benign
-// 204 No Content tells the beacon it succeeded and the page keeps
-// running.
 if (preg_match('#^/cdn-cgi/#', $path) || preg_match('#^/monitoring\?o=\d+&p=\d+#', $path)) {
     http_response_code(204);
     header('Content-Length: 0');
@@ -181,31 +142,17 @@ if (preg_match('#^/cdn-cgi/#', $path) || preg_match('#^/monitoring\?o=\d+&p=\d+#
     exit;
 }
 
-// ---------------- assets.grok.com / cdn.grok.com proxies ----------------
-// Frontend code that points at the assets/CDN gets rewritten to
-// /__grok_assets/... or /__grok_cdn/... by our client-side fetch
-// interceptor. We rewrite the path back here and forward to the real
-// CDN. Some assets (avatars, private uploads) require auth, so we
-// forward the upstream session cookies too.
-//
-// CRITICAL: cdn.grok.com is also behind Cloudflare and challenges
-// Hostinger's datacenter IP. We must route asset/CDN requests through
-// the same residential proxy pool we use for the main upstream.
-if (preg_match('#^/__grok_(assets|cdn)(/.*)?$#', $path, $assetMatch)) {
-    $cdnHost   = ($assetMatch[1] === 'cdn') ? 'cdn.grok.com' : 'assets.grok.com';
-    $assetPath = $assetMatch[2] ?? '/';
-    $assetUrl  = 'https://' . $cdnHost . $assetPath;
-    $upstreamCookieForAsset = '';
-    if (is_readable($COOKIE_FILE)) $upstreamCookieForAsset = trim(file_get_contents($COOKIE_FILE));
+// ---------------- assets.grok.com proxy ----------------
+if (preg_match('#^/__grok_assets(/.*)?$#', $path, $assetMatch)) {
+    $assetPath = $assetMatch[1] ?? '/';
+    $assetUrl  = 'https://assets.grok.com' . $assetPath;
+    $upstreamCookieForAsset = is_readable($COOKIE_FILE) ? trim(file_get_contents($COOKIE_FILE)) : '';
     $assetHeaders = [
-        'User-Agent: ' . ($_SERVER['HTTP_USER_AGENT'] ?? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'),
+        'User-Agent: ' . ($_SERVER['HTTP_USER_AGENT'] ?? 'Mozilla/5.0'),
         'Accept: ' . ($_SERVER['HTTP_ACCEPT'] ?? '*/*'),
         'Accept-Language: ' . ($_SERVER['HTTP_ACCEPT_LANGUAGE'] ?? 'en-US,en;q=0.9'),
         'Referer: https://grok.com/',
         'Origin: https://grok.com',
-        'Sec-Fetch-Dest: ' . ($_SERVER['HTTP_SEC_FETCH_DEST'] ?? 'empty'),
-        'Sec-Fetch-Mode: ' . ($_SERVER['HTTP_SEC_FETCH_MODE'] ?? 'cors'),
-        'Sec-Fetch-Site: same-site',
     ];
     if ($upstreamCookieForAsset !== '') $assetHeaders[] = 'Cookie: ' . $upstreamCookieForAsset;
     $ach = curl_init($assetUrl);
@@ -215,21 +162,15 @@ if (preg_match('#^/__grok_(assets|cdn)(/.*)?$#', $path, $assetMatch)) {
         CURLOPT_FOLLOWLOCATION => true,
         CURLOPT_TIMEOUT        => 60,
         CURLOPT_HTTPHEADER     => $assetHeaders,
-        CURLOPT_ENCODING       => '', // accept gzip/br from CDN
     ]);
     if ($UPSTREAM_PROXY) {
         curl_setopt($ach, CURLOPT_PROXY, $UPSTREAM_PROXY);
         curl_setopt($ach, CURLOPT_TIMEOUT, 90);
-        curl_setopt($ach, CURLOPT_CONNECTTIMEOUT, 25);
     }
     $assetBody = curl_exec($ach);
     $assetStatus = curl_getinfo($ach, CURLINFO_HTTP_CODE);
     $assetCT = curl_getinfo($ach, CURLINFO_CONTENT_TYPE);
-    $assetErr = curl_error($ach);
     curl_close($ach);
-    if ($assetErr) error_log('[grok-proxy.asset] ' . $assetUrl . ' err=' . $assetErr);
-    // For images (avatars), serve a transparent fallback on failure so
-    // the browser doesn\'t flag a broken image.
     if (($assetStatus < 200 || $assetStatus >= 300) && (strpos($assetCT, 'image/') !== false || preg_match('#\.(png|jpg|jpeg|gif|webp|svg|ico)#i', $assetPath))) {
         http_response_code(200);
         header('Content-Type: image/png');
@@ -244,9 +185,10 @@ if (preg_match('#^/__grok_(assets|cdn)(/.*)?$#', $path, $assetMatch)) {
     exit;
 }
 
-// Parse individual cookies so we can plant them on our subdomain via
-// Set-Cookie. Grok's frontend reads its session from document.cookie
-// on the client, exactly like Supabase does for WriteHuman.
+// ---------------- Read shared upstream cookie ----------------
+$upstreamCookie = is_readable($COOKIE_FILE) ? trim(file_get_contents($COOKIE_FILE)) : '';
+
+// Parse cookies for client-side planting on HTML responses.
 $plantCookies = [];
 if ($upstreamCookie !== '') {
     foreach (explode(';', $upstreamCookie) as $kv) {
@@ -256,10 +198,126 @@ if ($upstreamCookie !== '') {
         if ($eq === false) continue;
         $cname = trim(substr($kv, 0, $eq));
         $cval  = substr($kv, $eq + 1);
-        if ($cname === '') continue;
-        $plantCookies[$cname] = $cval;
+        if ($cname !== '') $plantCookies[$cname] = $cval;
     }
 }
+
+// ---------------- Build the head injection script ----------------
+//
+// One self-contained <script> we paste right after `<head>` on HTML
+// responses. Handles: hostname override, Sentry stub, fetch/XHR/WebSocket
+// URL rewriting, telemetry stub, cosmetic hiding, error-boundary hide.
+$INJECT = '<script>(function(){'
+    . 'try{Object.defineProperty(location,"hostname",{configurable:true,get:function(){return "grok.com";}});'
+    . 'Object.defineProperty(location,"host",{configurable:true,get:function(){return "grok.com";}});'
+    . '}catch(e){}'
+    . 'try{window.__SENTRY__={};window.SENTRY_RELEASE={};window.Sentry={'
+    . 'init:function(){},captureException:function(){},captureMessage:function(){},'
+    . 'addBreadcrumb:function(){},configureScope:function(){},withScope:function(fn){try{fn({setTag:function(){},setExtra:function(){},setUser:function(){}})}catch(e){}},'
+    . 'setUser:function(){},setTag:function(){},setExtra:function(){},setContext:function(){},'
+    . 'getCurrentHub:function(){return{getClient:function(){return null;},getScope:function(){return{setTag:function(){},setUser:function(){}};}};}'
+    . '};}catch(e){}'
+    // Diagnostic: surface real errors in console as warnings.
+    . 'try{window.addEventListener("error",function(e){'
+        . 'try{console.warn("[grok-proxy.error]",e&&e.message,e&&e.filename,e&&(e.lineno+":"+e.colno),e&&e.error&&e.error.stack);}catch(_){}'
+    . '},true);'
+    . 'window.addEventListener("unhandledrejection",function(e){'
+        . 'try{var r=e&&e.reason; console.warn("[grok-proxy.unhandled]", r&&r.message||String(r), r&&r.stack||"");}catch(_){}'
+    . '});'
+    . '}catch(e){}'
+    // URL rewriter + telemetry stub for fetch/XHR/sendBeacon.
+    . 'try{var PROXY_HOST=location.host;'
+    . 'function _rw(u){'
+        . 'try{if(typeof u!=="string")return u;'
+        . 'if(u.indexOf("https://grok.com")===0)return "https://"+PROXY_HOST+u.slice(16);'
+        . 'if(u.indexOf("http://grok.com")===0)return "https://"+PROXY_HOST+u.slice(15);'
+        . 'if(u.indexOf("//grok.com")===0)return "//"+PROXY_HOST+u.slice(10);'
+        . 'if(u.indexOf("https://assets.grok.com")===0)return "https://"+PROXY_HOST+"/__grok_assets"+u.slice(23);'
+        . '}catch(e){}return u;'
+    . '}'
+    . 'function _tele(url){'
+        . 'try{return url.indexOf("/cdn-cgi/rum")!==-1 || url.indexOf("/cdn-cgi/speedbrain")!==-1 || url.indexOf("/cdn-cgi/zaraz")!==-1 || /\\/monitoring\\?o=[0-9]+&p=[0-9]+/.test(url) || url.indexOf("sentry-cdn.com")!==-1 || url.indexOf(".ingest.sentry.io")!==-1;}catch(e){return false;}'
+    . '}'
+    . 'var _of=window.fetch;'
+    . 'window.fetch=function(input,init){'
+        . 'try{var url=typeof input==="string"?input:(input&&input.url)||"";'
+        . 'if(url && _tele(url)){return Promise.resolve(new Response(null,{status:204,statusText:"No Content"}));}'
+        . 'if(typeof input==="string"){var ru=_rw(input);if(ru!==input)input=ru;}'
+        . '}catch(e){}'
+        . 'return _of.apply(this,[input,init]);'
+    . '};'
+    . 'var _os=XMLHttpRequest.prototype.send;'
+    . 'var _oo=XMLHttpRequest.prototype.open;'
+    . 'XMLHttpRequest.prototype.open=function(method,url){'
+        . 'this.__t=(typeof url==="string"&&_tele(url));'
+        . 'if(typeof url==="string")arguments[1]=_rw(url);'
+        . 'return _oo.apply(this,arguments);'
+    . '};'
+    . 'XMLHttpRequest.prototype.send=function(){'
+        . 'if(this.__t){'
+            . 'var s=this;setTimeout(function(){'
+                . 'try{Object.defineProperty(s,"readyState",{value:4,configurable:true});'
+                . 'Object.defineProperty(s,"status",{value:204,configurable:true});'
+                . 'Object.defineProperty(s,"responseText",{value:"",configurable:true});'
+                . 'if(typeof s.onreadystatechange==="function")s.onreadystatechange();'
+                . 'if(typeof s.onload==="function")s.onload();'
+                . '}catch(e){}'
+            . '},0);return;'
+        . '}'
+        . 'return _os.apply(this,arguments);'
+    . '};'
+    . 'try{var _OW=window.WebSocket;'
+    . 'window.WebSocket=function(url,protocols){'
+        . 'try{if(typeof url==="string"){'
+            . 'if(url.indexOf("wss://grok.com")===0)url="wss://"+PROXY_HOST+url.slice(14);'
+            . 'else if(url.indexOf("ws://grok.com")===0)url="wss://"+PROXY_HOST+url.slice(13);'
+        . '}}catch(e){}'
+        . 'return new _OW(url,protocols);'
+    . '};'
+    . 'window.WebSocket.prototype=_OW.prototype;'
+    . 'window.WebSocket.CONNECTING=_OW.CONNECTING;'
+    . 'window.WebSocket.OPEN=_OW.OPEN;'
+    . 'window.WebSocket.CLOSING=_OW.CLOSING;'
+    . 'window.WebSocket.CLOSED=_OW.CLOSED;'
+    . '}catch(e){}'
+    . 'if(navigator.sendBeacon){var _ob=navigator.sendBeacon.bind(navigator);'
+        . 'navigator.sendBeacon=function(url,data){'
+            . 'try{if(typeof url==="string" && _tele(url))return true;'
+            . 'if(typeof url==="string")url=_rw(url);}catch(e){}'
+            . 'return _ob(url,data);'
+        . '};}'
+    . '}catch(e){}'
+    // Cosmetic hider for nav items + error-boundary fallback UI.
+    . 'try{function _hideErrAndNav(){'
+        . 'var bad=/^(My Account|Account|Settings|Billing|Subscription|Manage Subscription|Sign Out|Sign out|Logout|Log Out|Log out|Pricing|Upgrade|Upgrade to Pro|Upgrade to SuperGrok|Subscribe|API|Affiliate|Refer)$/i;'
+        . 'var nodes=document.querySelectorAll("header a,header button,nav a,nav button,aside a,aside button,[role=menu] a,[role=menu] button,[role=menuitem]");'
+        . 'for(var i=0;i<nodes.length;i++){'
+            . 'var t=(nodes[i].textContent||"").trim();'
+            . 'if(bad.test(t)){var n=nodes[i];try{n.style.display="none";'
+                . 'if(n.parentElement && n.parentElement.tagName==="LI")n.parentElement.style.display="none";'
+                . '}catch(e){}}'
+        . '}'
+        // Error boundary fallback
+        . 'var divs=document.querySelectorAll("h1,h2,h3,p,div");'
+        . 'for(var j=0;j<divs.length;j++){'
+            . 'var dt=(divs[j].textContent||"").trim();'
+            . 'if(dt==="Something went wrong"||dt==="Something unexpected happened. We\'re working to prevent this in the future."){'
+                . 'var p=divs[j].closest("[role=\\"alert\\"]")||divs[j].parentElement;'
+                . 'if(p && !p.__hp){p.__hp=true;p.style.display="none";}'
+            . '}'
+        . '}'
+    . '}'
+    . 'function _boot(){_hideErrAndNav();var mo=new MutationObserver(_hideErrAndNav);mo.observe(document.documentElement,{subtree:true,childList:true});}'
+    . 'if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",_boot);else _boot();'
+    . '}catch(e){}'
+    . '})();</script>'
+    . '<style>'
+    . 'a[href*="/account"],a[href*="/settings/account"],a[href*="/billing"],a[href*="/pricing"],'
+    . 'a[href*="/upgrade"],a[href*="/subscribe"],a[href*="/sign-out"],a[href*="/signout"],'
+    . 'a[href*="/logout"],a[href*="/api"],a[href*="/affiliate"]{display:none !important;}'
+    . 'button[data-testid*="sign-up" i],button[data-testid*="login" i],button[data-testid*="upgrade" i],'
+    . 'a[data-testid*="sign-up" i],a[data-testid*="login" i]{display:none !important;}'
+    . '</style>';
 
 // ---------------- Build upstream request ----------------
 $method      = $_SERVER['REQUEST_METHOD'] ?? 'GET';
@@ -296,107 +354,122 @@ $forwardHeaders[] = 'Sec-Fetch-Site: same-origin';
 if ($upstreamCookie !== '') $forwardHeaders[] = 'Cookie: ' . $upstreamCookie;
 $forwardHeaders[] = 'Accept-Encoding: identity';
 
-$body = file_get_contents('php://input');
+$reqBody = file_get_contents('php://input');
 
-// ---------------- Execute via cURL ----------------
-// ---------------- Execute via cURL ----------------
+// ---------------- Streaming proxy ----------------
 //
-// Two-mode strategy:
-//
-//   * For requests we KNOW need body rewriting (HTML, JSON, JS, CSS),
-//     we buffer the full response, rewrite, and emit. This is the
-//     classic mode and is used for the document path on first load.
-//
-//   * For everything else (streaming RSC `text/x-component`, SSE event
-//     streams, opaque chunked responses, large media), we stream chunks
-//     to the browser as they arrive using CURLOPT_WRITEFUNCTION. This is
-//     critical for Grok\'s chat surface: token-by-token streaming through
-//     a buffered proxy looks like "connection closed" to the React tree.
-//
-// Decide the mode from the request path. Document fetches and known
-// rewrite-needed endpoints use buffered mode; everything else streams.
-// We resolve content-type from the response headers in streaming mode
-// AFTER receiving them, falling back to "stream" for ambiguous cases.
+// Single mode: stream every chunk. For HTML, we buffer until we see
+// `<head>`, inject our script, then flush + stream verbatim.
 
-$pathLooksDoc = (
-    $path === '/' ||
-    $path === '' ||
-    preg_match('#^/[^./?]*/?(\?|$)#', $path)  // /foo, /foo/bar, no extension
-);
-
-// We can\'t know the content-type ahead of time for arbitrary requests,
-// so we make a single cURL call but use a streaming writer that buffers
-// only when the response is rewriteable. The writer collects header
-// bytes first, decides streaming vs buffering, and dispatches.
-
-$_streamMode    = null;     // null until we know
-$_streamBuffer  = '';
 $_responseHeaders = [];
-$_statusEmitted = false;
-$_responseStatus = 200;
+$_responseStatus  = 200;
+$_isHtml          = null;     // determined after headers
+$_headersFlushed  = false;
+$_headBuffer      = '';       // only used while waiting for <head>
+$_headInjected    = false;
+$_cookiesPlanted  = false;
 
 $ch = curl_init($upstreamUrl);
 curl_setopt_array($ch, [
     CURLOPT_CUSTOMREQUEST  => $method,
     CURLOPT_HTTPHEADER     => $forwardHeaders,
-    CURLOPT_POSTFIELDS     => $body !== '' ? $body : null,
+    CURLOPT_POSTFIELDS     => $reqBody !== '' ? $reqBody : null,
     CURLOPT_FOLLOWLOCATION => false,
-    CURLOPT_TIMEOUT        => 120,
-    CURLOPT_CONNECTTIMEOUT => 10,
+    CURLOPT_TIMEOUT        => 180,
+    CURLOPT_CONNECTTIMEOUT => 15,
     CURLOPT_SSL_VERIFYPEER => true,
     CURLOPT_SSL_VERIFYHOST => 2,
-    // Header callback: collect, then on first body byte decide mode.
     CURLOPT_HEADERFUNCTION => function ($ch, $line) use (&$_responseHeaders, &$_responseStatus) {
         $trim = trim($line);
         if ($trim === '') return strlen($line);
         if (preg_match('#^HTTP/[\d.]+ (\d+)#', $trim, $m)) {
             $_responseStatus = (int)$m[1];
-            $_responseHeaders = [];   // reset on redirect chain
+            $_responseHeaders = [];
             return strlen($line);
         }
         $_responseHeaders[] = $trim;
         return strlen($line);
     },
-    // Body writer: decides mode on first chunk. Streams or buffers.
     CURLOPT_WRITEFUNCTION => function ($ch, $chunk) use (
-        &$_streamMode, &$_streamBuffer, &$_responseHeaders, &$_statusEmitted, &$_responseStatus, &$_isStreamRewritable
+        &$_responseHeaders, &$_responseStatus, &$_isHtml, &$_headersFlushed,
+        &$_headBuffer, &$_headInjected, &$_cookiesPlanted, $INJECT, $plantCookies, $PROXY_HOST
     ) {
-        if ($_streamMode === null) {
-            // Determine mode from headers we collected.
-            $contentType = '';
+        // Determine HTML-ness once.
+        if ($_isHtml === null) {
+            $ct = '';
             foreach ($_responseHeaders as $h) {
-                if (stripos($h, 'content-type:') === 0) {
-                    $contentType = substr($h, 13);
-                    break;
-                }
+                if (stripos($h, 'content-type:') === 0) { $ct = strtolower($h); break; }
             }
-            $rewritable = _isRewritable($contentType);
-            $_streamMode = $rewritable ? 'buffer' : 'stream';
-
-            if ($_streamMode === 'stream') {
-                // Emit headers immediately so the client can start parsing.
-                http_response_code($_responseStatus);
-                _forward_response_headers($_responseHeaders);
-                // Disable PHP-level output buffering so flush() goes to the wire.
-                if (function_exists('ob_implicit_flush')) ob_implicit_flush(true);
-                while (ob_get_level() > 0) ob_end_flush();
-                $_statusEmitted = true;
-            }
+            $_isHtml = (strpos($ct, 'text/html') !== false);
         }
 
-        if ($_streamMode === 'stream') {
+        // Flush headers (once). For HTML we plant Set-Cookie before
+        // flushing so the browser receives them with the doc.
+        if (!$_headersFlushed) {
+            http_response_code($_responseStatus);
+            _forward_response_headers($_responseHeaders);
+            if ($_isHtml) {
+                if (!$_cookiesPlanted) {
+                    foreach ($plantCookies as $cname => $cval) {
+                        header('Set-Cookie: ' . $cname . '=' . $cval . '; Path=/; Max-Age=2592000; Secure; SameSite=Lax', false);
+                    }
+                    $_cookiesPlanted = true;
+                }
+                header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+                header('Pragma: no-cache');
+            }
+            // Disable PHP output buffering so chunks reach the wire.
+            if (function_exists('ob_implicit_flush')) ob_implicit_flush(true);
+            while (ob_get_level() > 0) ob_end_flush();
+            $_headersFlushed = true;
+        }
+
+        // Non-HTML: stream verbatim.
+        if (!$_isHtml) {
             echo $chunk;
             if (function_exists('flush')) @flush();
             return strlen($chunk);
-        } else {
-            $_streamBuffer .= $chunk;
+        }
+
+        // HTML: search for <head> while buffering. Once found, emit
+        // everything-up-to-and-including-<head> + INJECT, then stream
+        // the rest of this chunk and all future chunks verbatim.
+        if (!$_headInjected) {
+            $_headBuffer .= $chunk;
+            // Look for <head ...>
+            if (preg_match('/<head[^>]*>/i', $_headBuffer, $m, PREG_OFFSET_CAPTURE)) {
+                $tag = $m[0][0];
+                $tagPos = $m[0][1];
+                $tagEnd = $tagPos + strlen($tag);
+                $before = substr($_headBuffer, 0, $tagEnd);
+                $after  = substr($_headBuffer, $tagEnd);
+                $base   = '<base href="https://' . htmlspecialchars($PROXY_HOST, ENT_QUOTES) . '/">';
+                echo $before . $INJECT . $base . $after;
+                if (function_exists('flush')) @flush();
+                $_headBuffer = '';
+                $_headInjected = true;
+                return strlen($chunk);
+            }
+            // Safety: if we\'ve buffered >256KB without seeing <head>,
+            // give up and flush what we have.
+            if (strlen($_headBuffer) > 262144) {
+                echo $_headBuffer;
+                if (function_exists('flush')) @flush();
+                $_headBuffer = '';
+                $_headInjected = true;
+            }
             return strlen($chunk);
         }
+
+        // <head> already injected — pure passthrough.
+        echo $chunk;
+        if (function_exists('flush')) @flush();
+        return strlen($chunk);
     },
 ]);
 if ($UPSTREAM_PROXY) {
     curl_setopt($ch, CURLOPT_PROXY, $UPSTREAM_PROXY);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 180);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 240);
     curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 25);
 }
 
@@ -404,278 +477,23 @@ $execOk = curl_exec($ch);
 $err    = curl_error($ch);
 curl_close($ch);
 
-if ($err) {
-    if (!$_statusEmitted) {
-        http_response_code(502);
-        header('Content-Type: text/html; charset=utf-8');
-        echo '<div style="font-family:sans-serif;text-align:center;padding:14% 20px;">'
-           . '<h2 style="color:#0f0720;">Service unavailable</h2>'
-           . '<p>Grok cannot be reached right now. Please try again in a moment.</p>'
-           . '</div>';
-    }
-    error_log('[grok-proxy] curl error: ' . $err);
+// If we never got headers (connection refused / DNS / proxy auth fail),
+// emit a 502.
+if (!$_headersFlushed) {
+    http_response_code(502);
+    header('Content-Type: text/html; charset=utf-8');
+    echo '<div style="font-family:sans-serif;text-align:center;padding:14% 20px;">'
+       . '<h2 style="color:#0f0720;">Service unavailable</h2>'
+       . '<p>Grok cannot be reached right now. Please try again in a moment.</p>'
+       . '</div>';
+    if ($err) error_log('[grok-proxy] curl error (no headers): ' . $err);
     exit;
 }
 
-// In stream mode we already emitted the body. Done.
-if ($_streamMode === 'stream') exit;
-
-// In buffer mode we still need to rewrite + send.
-$body = $_streamBuffer;
-$status = $_responseStatus;
-$rawHeaders = implode("\r\n", $_responseHeaders);
-
-// If the response was empty (e.g. 204), skip rewrites entirely.
-if ($body === '' || $body === false) {
-    http_response_code($status);
-    _forward_response_headers($_responseHeaders);
-    exit;
+// HTML responses where we never saw <head> — flush whatever we buffered.
+if ($_isHtml && !$_headInjected && $_headBuffer !== '') {
+    echo $_headBuffer;
+    if (function_exists('flush')) @flush();
 }
 
-// ---------------- Detect content type ----------------
-$contentTypeHeader = '';
-foreach (preg_split("/\r?\n/", $rawHeaders) as $line) {
-    if (stripos($line, 'content-type:') === 0) { $contentTypeHeader = strtolower($line); break; }
-}
-$isHtml = (strpos($contentTypeHeader, 'text/html') !== false);
-$isJson = (strpos($contentTypeHeader, 'application/json') !== false);
-$isJs   = (strpos($contentTypeHeader, 'javascript') !== false);
-$isCss  = (strpos($contentTypeHeader, 'text/css') !== false);
-$isRsc  = (strpos($contentTypeHeader, 'text/x-component') !== false);
-
-// ---------------- Rewrite URLs ----------------
-if (($isHtml || $isJson || $isJs || $isCss || $isRsc) && $body !== '') {
-    $body = str_replace('https://grok.com',  'https://' . $PROXY_HOST, $body);
-    $body = str_replace('http://grok.com',   'https://' . $PROXY_HOST, $body);
-    $body = str_replace('//grok.com',        '//' . $PROXY_HOST,       $body);
-    $body = str_replace('https:\\/\\/grok.com', 'https:\\/\\/' . $PROXY_HOST, $body);
-    // Also rewrite the assets CDN so avatars/static load through us.
-    $body = str_replace('https://assets.grok.com',  'https://' . $PROXY_HOST . '/__grok_assets', $body);
-    $body = str_replace('https:\\/\\/assets.grok.com', 'https:\\/\\/' . $PROXY_HOST . '\\/__grok_assets', $body);
-    // NOTE: we do NOT rewrite cdn.grok.com. That CDN is heavily
-    // Cloudflare-bot-protected and will 403 datacenter and residential
-    // proxy fetches alike. Instead we let the browser fetch JS/CSS/font
-    // chunks directly from cdn.grok.com — those requests come from the
-    // student\'s real IP & browser fingerprint, which Cloudflare accepts.
-
-    // Neutralize generic hostname-guard IIFEs that redirect to grok.com.
-    $body = preg_replace(
-        '/\(function\(\)\{var h=location\.hostname;[^}]+\}\)\(\)/',
-        '(function(){})()',
-        $body
-    );
-    $body = preg_replace(
-        '/\(function\(\)\{var h=location\.hostname;[^}]+\}\)\(\)/u',
-        '(function(){})()',
-        $body
-    );
-}
-
-// ---------------- HTML-only patches ----------------
-if ($isHtml && $body !== '') {
-    // Strip Cloudflare's auto-injected RUM / Speed-Brain / Zaraz scripts
-    // from the upstream HTML. They reference /cdn-cgi/* endpoints and
-    // /__cf/* assets that don't exist on our subdomain. The React error
-    // boundary trips when their callbacks fail.
-    $body = preg_replace(
-        '#<script[^>]*?(?:/cdn-cgi/|cloudflare-static|speedbrain|/beacon\.min\.js)[^<]*?</script>#is',
-        '',
-        $body
-    );
-    // Some are loaded via inline <script> with the script body referencing
-    // those paths. Zap any inline script that calls /cdn-cgi/.
-    $body = preg_replace(
-        '#<script[^>]*>[^<]*?/cdn-cgi/[^<]*?</script>#is',
-        '',
-        $body
-    );
-
-    foreach ($plantCookies as $cname => $cval) {
-        $cookieHeader = $cname . '=' . $cval . '; Path=/; Max-Age=2592000; Secure; SameSite=Lax';
-        header('Set-Cookie: ' . $cookieHeader, false);
-    }
-
-    $hostnameOverride = '<script>(function(){'
-        . 'try{Object.defineProperty(location,"hostname",{configurable:true,get:function(){return "grok.com";}});'
-        . 'Object.defineProperty(location,"host",{configurable:true,get:function(){return "grok.com";}});'
-        . '}catch(e){}'
-        // Stub Sentry to a no-op so its session-replay tracing doesn\'t
-        // fight our location override.
-        . 'try{window.__SENTRY__={};window.SENTRY_RELEASE={};window.Sentry={'
-        . 'init:function(){},captureException:function(){},captureMessage:function(){},'
-        . 'addBreadcrumb:function(){},configureScope:function(){},withScope:function(fn){try{fn({setTag:function(){},setExtra:function(){},setUser:function(){}})}catch(e){}},'
-        . 'setUser:function(){},setTag:function(){},setExtra:function(){},setContext:function(){},'
-        . 'getCurrentHub:function(){return{getClient:function(){return null;},getScope:function(){return{setTag:function(){},setUser:function(){}};}};}'
-        . '};}catch(e){}'
-        // Capture errors so they\'re visible in DevTools as a structured
-        // log line, even if React\'s own boundary swallows them. Helps
-        // us diagnose what\'s actually triggering "Something went wrong".
-        . 'try{var BAD_NOOP=/^xx_does_not_match$/;'
-        . 'window.addEventListener("error",function(e){'
-            . 'try{console.warn("[grok-proxy.error]",e&&e.message,e&&e.filename,e&&(e.lineno+":"+e.colno),e&&e.error&&e.error.stack);}catch(_){}'
-        . '},true);'
-        . 'window.addEventListener("unhandledrejection",function(e){'
-            . 'try{var r=e&&e.reason; console.warn("[grok-proxy.unhandled]", r&&r.message||String(r), r&&r.stack||"");}catch(_){}'
-        . '});'
-        . '}catch(e){}'
-        // Swallow Cloudflare RUM beacons. The minified JS posts to
-        // /cdn-cgi/rum on every interaction; if the response isn\'t 200,
-        // their callback throws an exception that bubbles up to React\'s
-        // error boundary. We make it always succeed-as-noop.
-        // We ALSO use this layer to rewrite outgoing URLs from grok.com
-        // to our proxy host. Server-side rewriting was buffering streams;
-        // doing it client-side keeps streams flowing.
-        . 'try{var PROXY_HOST=location.host;'
-        . 'function _rewriteUrl(u){'
-            . 'try{if(typeof u!=="string")return u;'
-            . 'if(u.indexOf("https://grok.com")===0)return "https://"+PROXY_HOST+u.slice(16);'
-            . 'if(u.indexOf("http://grok.com")===0)return "https://"+PROXY_HOST+u.slice(15);'
-            . 'if(u.indexOf("//grok.com")===0)return "//"+PROXY_HOST+u.slice(10);'
-            . 'if(u.indexOf("https://assets.grok.com")===0)return "https://"+PROXY_HOST+"/__grok_assets"+u.slice(23);'
-            . '}catch(e){}return u;'
-        . '}'
-        // Narrow telemetry stub: only short-circuit beacons to known
-        // telemetry endpoints. Earlier `/monitoring/` matcher was too
-        // broad and was swallowing legitimate Grok API paths.
-        . 'function _isTelemetry(url){'
-            . 'try{return url.indexOf("/cdn-cgi/rum")!==-1 || url.indexOf("/cdn-cgi/speedbrain")!==-1 || url.indexOf("/cdn-cgi/zaraz")!==-1 || /\\/monitoring\\?o=[0-9]+&p=[0-9]+/.test(url) || url.indexOf("sentry-cdn.com")!==-1 || url.indexOf(".ingest.sentry.io")!==-1;}catch(e){return false;}'
-        . '}'
-        . 'var _origFetch=window.fetch;'
-        . 'window.fetch=function(input,init){'
-            . 'try{var url=typeof input==="string"?input:(input&&input.url)||"";'
-            . 'if(url && _isTelemetry(url)){return Promise.resolve(new Response(null,{status:204,statusText:"No Content"}));}'
-            . 'if(typeof input==="string"){var ru=_rewriteUrl(input);if(ru!==input)input=ru;}'
-            // For Request inputs we leave the URL alone — cloning a
-            // Request consumes its stream body, which would break
-            // streaming POSTs. Grok\'s frontend already constructs
-            // requests with the relative paths after our HTML rewrite.
-            . '}catch(e){}'
-            . 'return _origFetch.apply(this,[input,init]);'
-        . '};'
-        . 'var _origSend=XMLHttpRequest.prototype.send;'
-        . 'var _origOpen=XMLHttpRequest.prototype.open;'
-        . 'XMLHttpRequest.prototype.open=function(method,url){'
-            . 'this.__telemetry=(typeof url==="string"&&_isTelemetry(url));'
-            . 'if(typeof url==="string")arguments[1]=_rewriteUrl(url);'
-            . 'return _origOpen.apply(this,arguments);'
-        . '};'
-        . 'XMLHttpRequest.prototype.send=function(){'
-            . 'if(this.__telemetry){'
-                . 'var self=this;setTimeout(function(){'
-                    . 'try{Object.defineProperty(self,"readyState",{value:4,configurable:true});'
-                    . 'Object.defineProperty(self,"status",{value:204,configurable:true});'
-                    . 'Object.defineProperty(self,"responseText",{value:"",configurable:true});'
-                    . 'if(typeof self.onreadystatechange==="function")self.onreadystatechange();'
-                    . 'if(typeof self.onload==="function")self.onload();'
-                    . '}catch(e){}'
-                . '},0);return;'
-            . '}'
-            . 'return _origSend.apply(this,arguments);'
-        . '};'
-        // WebSocket URL rewrite — Grok may open ws://grok.com/* for live
-        // chat; route to our subdomain so the WS handshake reaches us.
-        . 'try{var _OrigWS=window.WebSocket;'
-        . 'window.WebSocket=function(url,protocols){'
-            . 'try{if(typeof url==="string"){'
-                . 'if(url.indexOf("wss://grok.com")===0)url="wss://"+PROXY_HOST+url.slice(14);'
-                . 'else if(url.indexOf("ws://grok.com")===0)url="wss://"+PROXY_HOST+url.slice(13);'
-            . '}}catch(e){}'
-            . 'return new _OrigWS(url,protocols);'
-        . '};'
-        . 'window.WebSocket.prototype=_OrigWS.prototype;'
-        . 'window.WebSocket.CONNECTING=_OrigWS.CONNECTING;'
-        . 'window.WebSocket.OPEN=_OrigWS.OPEN;'
-        . 'window.WebSocket.CLOSING=_OrigWS.CLOSING;'
-        . 'window.WebSocket.CLOSED=_OrigWS.CLOSED;'
-        . '}catch(e){}'
-        . 'if(navigator.sendBeacon){var _origBeacon=navigator.sendBeacon.bind(navigator);'
-            . 'navigator.sendBeacon=function(url,data){'
-                . 'try{if(typeof url==="string" && _isTelemetry(url))return true;'
-                . 'if(typeof url==="string")url=_rewriteUrl(url);}catch(e){}'
-                . 'return _origBeacon(url,data);'
-            . '};}'
-        . '}catch(e){}'
-        // Last-resort: if React\'s error boundary still trips on a
-        // streaming hiccup, hide the boundary fallback UI so the chat
-        // mounts underneath. We look for the unique fallback text and
-        // remove it from the DOM. Mutation observer keeps applying.
-        . 'try{function _hideErrBoundary(){'
-            . 'var nodes=document.querySelectorAll("h1,h2,h3,p,div");'
-            . 'for(var i=0;i<nodes.length;i++){'
-                . 'var t=(nodes[i].textContent||"").trim();'
-                . 'if(t==="Something went wrong" || t==="Something unexpected happened. We\'re working to prevent this in the future."){'
-                    . 'var p=nodes[i].closest("[role=\\"alert\\"]")||nodes[i].parentElement;'
-                    . 'if(p && !p.__hidByProxy){p.__hidByProxy=true;p.style.display="none";}'
-                . '}'
-            . '}'
-        . '}'
-        . 'function _bootHide(){_hideErrBoundary();var mo=new MutationObserver(_hideErrBoundary);mo.observe(document.documentElement,{subtree:true,childList:true});}'
-        . 'if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",_bootHide);else _bootHide();'
-        . '}catch(e){}'
-        . '})();</script>';
-
-    // ---------------- Cosmetic hider ----------------
-    // Hide UI that would expose the master account or let students leave
-    // the chat surface. Same pattern as writehuman-proxy.php. We're
-    // conservative: only hide elements whose VISIBLE TEXT or HREF clearly
-    // marks them as account / billing / sign-out / pricing controls.
-    $cosmeticHider = '<style>'
-        // Common nav anchors by href.
-        . 'a[href*="/account"],'
-        . 'a[href*="/settings/account"],'
-        . 'a[href*="/billing"],'
-        . 'a[href*="/pricing"],'
-        . 'a[href*="/upgrade"],'
-        . 'a[href*="/subscribe"],'
-        . 'a[href*="/sign-out"],'
-        . 'a[href*="/signout"],'
-        . 'a[href*="/logout"],'
-        . 'a[href*="/api"],'
-        . 'a[href*="/affiliate"]'
-        . '{display:none !important;}'
-        // The big "Sign Up" / "Log In" buttons that show before our
-        // injected cookies have been picked up by the SPA.
-        . 'button[data-testid*="sign-up" i],'
-        . 'button[data-testid*="login" i],'
-        . 'button[data-testid*="upgrade" i],'
-        . 'a[data-testid*="sign-up" i],'
-        . 'a[data-testid*="login" i]'
-        . '{display:none !important;}'
-        . '</style>';
-
-    $hideScript = '<script>(function(){'
-        . 'function hideByText(){'
-        . 'var bad=/^(My Account|Account|Settings|Billing|Subscription|Manage Subscription|Sign Out|Sign out|Logout|Log Out|Log out|Pricing|Upgrade|Upgrade to Pro|Upgrade to SuperGrok|Subscribe|API|Affiliate|Refer)$/i;'
-        . 'var nodes=document.querySelectorAll("header a,header button,nav a,nav button,aside a,aside button,[role=menu] a,[role=menu] button,[role=menuitem]");'
-        . 'for(var i=0;i<nodes.length;i++){'
-            . 'var t=(nodes[i].textContent||"").trim();'
-            . 'if(bad.test(t)){'
-                . 'var n=nodes[i];'
-                . 'try{n.style.display="none";'
-                    . 'if(n.parentElement && n.parentElement.tagName==="LI"){n.parentElement.style.display="none";}'
-                . '}catch(e){}'
-            . '}'
-        . '}'
-        . '}'
-        . 'function start(){hideByText();var mo=new MutationObserver(hideByText);mo.observe(document.documentElement,{subtree:true,childList:true});}'
-        . 'if(document.readyState==="loading"){document.addEventListener("DOMContentLoaded",start);}else{start();}'
-        . '})();</script>';
-
-    $body = preg_replace(
-        '/<head([^>]*)>/i',
-        '<head$1>' . $hostnameOverride . $cosmeticHider . $hideScript . '<base href="https://' . htmlspecialchars($PROXY_HOST, ENT_QUOTES) . '/">',
-        $body,
-        1
-    );
-}
-
-// ---------------- Forward upstream headers (buffer mode only) ----------------
-http_response_code($status);
-_forward_response_headers($_responseHeaders);
-
-if ($isHtml) {
-    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
-    header('Pragma: no-cache');
-}
-
-echo $body;
+if ($err) error_log('[grok-proxy] curl error after partial response: ' . $err);
