@@ -269,18 +269,18 @@
                     <li>Press <b>F12</b> to open DevTools.</li>
                     <li>Click the <b>Application</b> tab (or <b>Storage</b> in Firefox).</li>
                     <li>Expand <b>Cookies</b> in the left sidebar, click the upstream domain.</li>
-                    <li>Find the row whose name starts with <code style="background:rgba(124,58,237,0.15); padding:1px 5px; border-radius:4px;">sb-…-auth-token</code>. Click it.</li>
-                    <li>Copy the entire <b>Value</b> column (it starts with <code>base64-eyJ</code> and is very long).</li>
-                    <li>Paste it into the box below and click <b>Save</b>.</li>
+                    <li>Find the rows whose name starts with <code style="background:rgba(124,58,237,0.15); padding:1px 5px; border-radius:4px;">sb-…-auth-token</code>. There may be one row, or several with suffixes <code>.0</code>, <code>.1</code>, <code>.2</code> when the token is large.</li>
+                    <li>For each one, click the row, copy the full <b>Cookie Value</b>, and paste below. The order doesn't matter — paste all of them in the box (one per line is fine), and the system stitches them together automatically.</li>
+                    <li>Click <b>Save Cookies</b>.</li>
                 </ol>
-                <p style="margin:14px 0 0; font-size:0.78rem; color:var(--text-secondary);">Tip: pasting just the auth-token is enough. The system auto-detects the cookie name. If you also have <code>sb-session-token</code> and <code>wh_anon_id</code>, paste the full <code>name=value; name=value; …</code> line for the most complete handoff.</p>
+                <p style="margin:14px 0 0; font-size:0.78rem; color:var(--text-secondary);">Tip: you can also paste the entire <code>name=value; name=value; …</code> Cookie line from the Network tab. Either format works.</p>
             </details>
 
             <!-- Paste -->
             <div class="form-group" style="margin-top:1.25rem;">
-                <label style="font-size:0.85rem;">Paste cookies here</label>
+                <label style="font-size:0.85rem;">Paste cookies here (raw values from DevTools — newlines and chunked names are OK)</label>
                 <textarea id="cf-paste" style="height:160px; font-family:monospace; font-size:0.78rem; line-height:1.4;"
-                    placeholder="sb-...-auth-token=base64-eyJhbGciOi...&#10;&#10;OR paste the full Cookie line (multiple cookies separated by ; )"></textarea>
+                    placeholder="sb-...-auth-token.0=base64-eyJhbGciOi...&#10;sb-...-auth-token.1=continuation...&#10;sb-session-token=92ae97b3-...&#10;&#10;OR paste the whole Cookie: line from the Network tab"></textarea>
             </div>
 
             <div id="cf-result" style="display:none; padding:10px 14px; border-radius:8px; margin-top:0.5rem; font-size:0.85rem;"></div>

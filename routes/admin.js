@@ -842,11 +842,17 @@ function decodeSupabaseAuthCookie(cookieLine) {
     const m = /sb-[a-z0-9]+-auth-token=([^;]+)/i.exec(cookieLine);
     if (!m) return {};
     let value = decodeURIComponent(m[1].trim());
-    if (value.startsWith('base64-')) {
+    if (value.toLowerCase().startsWith('base64-')) {
         try {
-            value = Buffer.from(value.slice(7).replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+            let v = value.slice(7).replace(/-/g, '+').replace(/_/g, '/');
+            while (v.length % 4) v += '=';
+            value = Buffer.from(v, 'base64').toString('utf8');
         } catch (_) { return {}; }
     }
+    // Trim anything after the last `}` so accidental trailing junk
+    // doesn\'t break JSON.parse.
+    const close = value.lastIndexOf('}');
+    if (close > 0) value = value.substring(0, close + 1);
     try {
         const blob = JSON.parse(value);
         return {
@@ -914,26 +920,174 @@ router.put('/services/:id/cookie-file', async (req, res) => {
         pasted = pasted.replace(/^['"]/, '').replace(/['"]$/, '').trim();
         pasted = pasted.replace(/^cookie:\s*/i, '');
 
-        // If the paste looks like a bare auth-token value (no "name="),
-        // wrap it with the canonical Supabase cookie name. We auto-detect
-        // the project ref from the existing file so this works for any
-        // Supabase-backed service without hard-coding the ref.
-        if (!/=/.test(pasted) || /^(?:base64-)?eyJ[A-Za-z0-9_-]+\./.test(pasted)) {
-            let ref = 'hicfsbrfkzsxbwayibfm'; // WriteHuman's project — sensible default
-            if (fs.existsSync(svc.cookie_file)) {
-                const existing = fs.readFileSync(svc.cookie_file, 'utf8');
-                const m = /sb-([a-z0-9]+)-auth-token=/i.exec(existing);
-                if (m) ref = m[1];
-            }
-            pasted = `sb-${ref}-auth-token=${pasted}`;
+        // ---- Chunked Supabase cookies ----
+        // Modern Supabase splits long auth blobs across multiple cookies:
+        //   sb-{ref}-auth-token.0=base64-...
+        //   sb-{ref}-auth-token.1=...
+        //   sb-{ref}-auth-token.2=...
+        // The browser's "Application" tab shows them as separate rows.
+        // Admins frequently copy/paste all of them at once and the rows
+        // arrive concatenated with various separators (newline, no
+        // separator at all, weird "or these?" tokens between blocks).
+        //
+        // Strategy: be aggressively tolerant. We use a multi-pass parser:
+        //   1. Find every `sb-...-auth-token(.N)?` marker and grab the
+        //      following base64 blob, regardless of what separator is
+        //      between them.
+        //   2. Find any standalone UUIDs (xxxxxxxx-xxxx-xxxx-xxxx-...)
+        //      and treat them as candidate session-token / anon_id values.
+        //   3. Find any explicit `name=value` pairs the admin pasted.
+        const parsed = {};
+        const chunked = {};
+
+        // (1) Auth-token chunks. We split the paste on every occurrence
+        // of the cookie-name marker (`sb-..-auth-token` with optional
+        // `.N`) and take everything between markers as candidate value.
+        // Then trim non-base64 trailing junk.
+        //
+        // This handles all the messy paste shapes admins produce:
+        //   - "sb-x-auth-token.0base64-eyJ...sb-x-auth-token.1abc..."
+        //   - "sb-x-auth-token.0=base64-eyJ...; sb-x-auth-token.1=abc..."
+        //   - the literal junk text users type between chunks
+        const MARKER_RE = /sb-([a-z0-9]+)-auth-token(?:\.(\d+))?/gi;
+        const markers = [];
+        let mm;
+        while ((mm = MARKER_RE.exec(pasted)) !== null) {
+            markers.push({ ref: mm[1], idx: mm[2] != null ? parseInt(mm[2], 10) : 0, start: mm.index, end: mm.index + mm[0].length });
         }
 
-        // Decode to extract expiry — both for validation and for the UI
-        // to show what the admin just pasted.
-        const meta = decodeSupabaseAuthCookie(pasted);
+        let detectedRef = null;
+        for (let i = 0; i < markers.length; i++) {
+            const mk = markers[i];
+            detectedRef = detectedRef || mk.ref;
+            const valStart = mk.end;
+            const valEnd = (i + 1 < markers.length) ? markers[i + 1].start : pasted.length;
+            let raw = pasted.substring(valStart, valEnd);
+
+            raw = raw.replace(/^\s*=\s*/, '');
+
+            let val = '';
+            const prefix = raw.match(/^base64-/i);
+            if (prefix) {
+                val = prefix[0];
+                raw = raw.substring(prefix[0].length);
+            }
+            const m2 = raw.match(/^[A-Za-z0-9_+\/=\-]+/);
+            if (m2) val += m2[0];
+            if (!val) continue;
+
+            const baseName = `sb-${mk.ref}-auth-token`;
+            if (!chunked[baseName]) chunked[baseName] = {};
+            chunked[baseName][mk.idx] = val;
+        }
+
+        // Stitch + decode with retry. We try trimming up to 8 chars off
+        // the tail of each chunk to absorb whatever junk admins typed
+        // between rows. JSON.parse on the decoded payload is our oracle:
+        // when it succeeds and yields a user object, we have the right
+        // boundary.
+        function tryDecode(stitched) {
+            let v = stitched;
+            if (v.toLowerCase().startsWith('base64-')) v = v.slice(7);
+            v = v.replace(/-/g, '+').replace(/_/g, '/');
+            while (v.length % 4) v += '=';
+            try {
+                const decoded = Buffer.from(v, 'base64').toString('utf8');
+                const close = decoded.lastIndexOf('}');
+                const candidate = close > 0 ? decoded.substring(0, close + 1) : decoded;
+                const obj = JSON.parse(candidate);
+                if (obj && (obj.access_token || obj.refresh_token || obj.user)) return obj;
+            } catch (_) {}
+            return null;
+        }
+
+        for (const base of Object.keys(chunked)) {
+            const indices = Object.keys(chunked[base]).map(Number).sort((a, b) => a - b);
+            // Build the stitched value. Try the obvious case first.
+            const rawChunks = indices.map(i => chunked[base][i]);
+            const naive = rawChunks.join('');
+            let resolved = naive;
+            if (!tryDecode(naive)) {
+                // Brute force trim trailing chars from each chunk (max 8 each).
+                let found = null;
+                outer: for (let trim0 = 0; trim0 <= 8; trim0++) {
+                    for (let trim1 = 0; trim1 <= 8; trim1++) {
+                        const c0 = rawChunks[0] ? rawChunks[0].substring(0, rawChunks[0].length - trim0) : '';
+                        const c1 = rawChunks[1] ? rawChunks[1].substring(0, rawChunks[1].length - trim1) : '';
+                        const rest = rawChunks.slice(2).join('');
+                        const candidate = c0 + c1 + rest;
+                        if (tryDecode(candidate)) { found = candidate; break outer; }
+                    }
+                }
+                if (found) resolved = found;
+            }
+            parsed[base] = resolved;
+        }
+
+        // (2) Find name=value pairs the admin pasted explicitly. This
+        // catches sb-session-token, wh_anon_id, etc.
+        const PAIR_RE = /([a-zA-Z][a-zA-Z0-9_.\-]{1,80})\s*=\s*([^;\n\r,\s][^;\n\r]*)/g;
+        let pm;
+        while ((pm = PAIR_RE.exec(pasted)) !== null) {
+            const name = pm[1].trim();
+            const value = pm[2].trim();
+            if (!name || !value) continue;
+            // Skip auth-token chunked names (we already handled them).
+            if (/^sb-[a-z0-9]+-auth-token(?:\.\d+)?$/i.test(name)) continue;
+            // Skip if this name is already set by chunk-stitching.
+            if (parsed[name]) continue;
+            parsed[name] = value;
+        }
+
+        // (3) Capture standalone UUIDs as candidate session tokens / anon ids.
+        // We only do this if the admin pasted them un-named. We assign
+        // the first UUID to sb-session-token, the second to wh_anon_id,
+        // matching the typical Supabase + product pattern.
+        const UUID_RE = /\b([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/gi;
+        const seenUuids = new Set();
+        const uuids = [];
+        let um;
+        while ((um = UUID_RE.exec(pasted)) !== null) {
+            const u = um[1].toLowerCase();
+            if (!seenUuids.has(u)) { seenUuids.add(u); uuids.push(u); }
+        }
+        if (uuids.length > 0 && !parsed['sb-session-token']) {
+            parsed['sb-session-token'] = uuids[0];
+        }
+        if (uuids.length > 1 && !parsed['wh_anon_id']) {
+            parsed['wh_anon_id'] = uuids[1];
+        }
+
+        // If we still have no auth-token detected, the paste may be a
+        // bare auth-token value with no name at all.
+        const authKey = Object.keys(parsed).find(k => /^sb-[a-z0-9]+-auth-token$/i.test(k));
+        if (!authKey) {
+            const bareJwt = pasted.match(/(?:base64-)?(eyJ[A-Za-z0-9_+\/=\-]{50,})/);
+            if (bareJwt) {
+                let ref = detectedRef || 'hicfsbrfkzsxbwayibfm';
+                if (!detectedRef && fs.existsSync(svc.cookie_file)) {
+                    const existing = fs.readFileSync(svc.cookie_file, 'utf8');
+                    const m2 = /sb-([a-z0-9]+)-auth-token=/i.exec(existing);
+                    if (m2) ref = m2[1];
+                }
+                parsed[`sb-${ref}-auth-token`] = 'base64-' + bareJwt[1];
+            }
+        }
+
+        // Build the cookie line — auth-token first for readability.
+        const finalAuthKey = Object.keys(parsed).find(k => /^sb-[a-z0-9]+-auth-token$/i.test(k));
+        const orderedKeys = [];
+        if (finalAuthKey) orderedKeys.push(finalAuthKey);
+        for (const k of Object.keys(parsed)) {
+            if (k !== finalAuthKey) orderedKeys.push(k);
+        }
+        const cookieLine = orderedKeys.map(k => `${k}=${parsed[k]}`).join('; ');
+
+        // Decode to extract expiry — both for validation and for the UI.
+        const meta = decodeSupabaseAuthCookie(cookieLine);
         if (!meta.expires_at && !meta.has_refresh_token) {
             return res.status(400).json({
-                error: 'That does not look like a valid Supabase auth cookie. Make sure you copied the full value of "sb-...-auth-token" (it starts with "base64-eyJ").'
+                error: 'Could not find a valid Supabase auth-token in your paste. In DevTools → Cookies, click each row whose name starts with "sb-...-auth-token" (look for ".0" / ".1" suffixes too) and copy its full value into the box. The system will stitch them together automatically.'
             });
         }
 
@@ -943,7 +1097,7 @@ router.put('/services/:id/cookie-file', async (req, res) => {
             return res.status(500).json({ error: 'Data directory does not exist on this host: ' + dir });
         }
         const tmp = svc.cookie_file + '.tmp';
-        fs.writeFileSync(tmp, pasted + '\n', { mode: 0o600 });
+        fs.writeFileSync(tmp, cookieLine + '\n', { mode: 0o600 });
         fs.renameSync(tmp, svc.cookie_file);
         try { fs.chmodSync(svc.cookie_file, 0o600); } catch (_) {}
 
@@ -951,6 +1105,7 @@ router.put('/services/:id/cookie-file', async (req, res) => {
             message: 'Cookie file updated',
             ...meta,
             size_bytes: fs.statSync(svc.cookie_file).size,
+            cookie_names: orderedKeys,
         });
     } catch (e) {
         console.error('cookie-file write error:', e);
