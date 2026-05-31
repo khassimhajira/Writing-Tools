@@ -117,6 +117,22 @@ if (is_readable($COOKIE_FILE)) {
     $upstreamCookie = trim(file_get_contents($COOKIE_FILE));
 }
 
+// ---------------- Cloudflare /cdn-cgi/* short-circuit ----------------
+// Cloudflare auto-injects scripts that POST telemetry to /cdn-cgi/rum,
+// /cdn-cgi/speedbrain, /cdn-cgi/zaraz, etc. On grok.com these endpoints
+// are served by Cloudflare directly (not the origin), but our subdomain
+// only has Cloudflare's basic CDN — those paths return 404. Some of
+// Grok's bundled JS treats a 404 here as a fatal error and trips the
+// React error boundary ("Something went wrong"). Returning a benign
+// 204 No Content tells the beacon it succeeded and the page keeps
+// running.
+if (preg_match('#^/cdn-cgi/#', $path)) {
+    http_response_code(204);
+    header('Content-Length: 0');
+    header('Cache-Control: no-store');
+    exit;
+}
+
 // Parse individual cookies so we can plant them on our subdomain via
 // Set-Cookie. Grok's frontend reads its session from document.cookie
 // on the client, exactly like Supabase does for WriteHuman.
@@ -246,6 +262,23 @@ if (($isHtml || $isJson || $isJs || $isCss || $isRsc) && $body !== '') {
 
 // ---------------- HTML-only patches ----------------
 if ($isHtml && $body !== '') {
+    // Strip Cloudflare's auto-injected RUM / Speed-Brain / Zaraz scripts
+    // from the upstream HTML. They reference /cdn-cgi/* endpoints and
+    // /__cf/* assets that don't exist on our subdomain. The React error
+    // boundary trips when their callbacks fail.
+    $body = preg_replace(
+        '#<script[^>]*?(?:/cdn-cgi/|cloudflare-static|speedbrain|/beacon\.min\.js)[^<]*?</script>#is',
+        '',
+        $body
+    );
+    // Some are loaded via inline <script> with the script body referencing
+    // those paths. Zap any inline script that calls /cdn-cgi/.
+    $body = preg_replace(
+        '#<script[^>]*>[^<]*?/cdn-cgi/[^<]*?</script>#is',
+        '',
+        $body
+    );
+
     foreach ($plantCookies as $cname => $cval) {
         $cookieHeader = $cname . '=' . $cval . '; Path=/; Max-Age=2592000; Secure; SameSite=Lax';
         header('Set-Cookie: ' . $cookieHeader, false);
@@ -255,12 +288,50 @@ if ($isHtml && $body !== '') {
         . 'try{Object.defineProperty(location,"hostname",{configurable:true,get:function(){return "grok.com";}});'
         . 'Object.defineProperty(location,"host",{configurable:true,get:function(){return "grok.com";}});'
         . '}catch(e){}'
+        // Stub Sentry to a no-op so its session-replay tracing doesn\'t
+        // fight our location override.
         . 'try{window.__SENTRY__={};window.SENTRY_RELEASE={};window.Sentry={'
         . 'init:function(){},captureException:function(){},captureMessage:function(){},'
         . 'addBreadcrumb:function(){},configureScope:function(){},withScope:function(fn){try{fn({setTag:function(){},setExtra:function(){},setUser:function(){}})}catch(e){}},'
         . 'setUser:function(){},setTag:function(){},setExtra:function(){},setContext:function(){},'
         . 'getCurrentHub:function(){return{getClient:function(){return null;},getScope:function(){return{setTag:function(){},setUser:function(){}};}};}'
         . '};}catch(e){}'
+        // Swallow Cloudflare RUM beacons. The minified JS posts to
+        // /cdn-cgi/rum on every interaction; if the response isn\'t 200,
+        // their callback throws an exception that bubbles up to React\'s
+        // error boundary. We make it always succeed-as-noop.
+        . 'try{var _origFetch=window.fetch;'
+        . 'window.fetch=function(input,init){'
+            . 'try{var url=typeof input==="string"?input:(input&&input.url)||"";'
+            . 'if(url && url.indexOf("/cdn-cgi/")!==-1){return Promise.resolve(new Response(null,{status:204,statusText:"No Content"}));}'
+            . '}catch(e){}'
+            . 'return _origFetch.apply(this,arguments);'
+        . '};'
+        . 'var _origSend=XMLHttpRequest.prototype.send;'
+        . 'var _origOpen=XMLHttpRequest.prototype.open;'
+        . 'XMLHttpRequest.prototype.open=function(method,url){'
+            . 'this.__cdn_cgi=(typeof url==="string"&&url.indexOf("/cdn-cgi/")!==-1);'
+            . 'return _origOpen.apply(this,arguments);'
+        . '};'
+        . 'XMLHttpRequest.prototype.send=function(){'
+            . 'if(this.__cdn_cgi){'
+                . 'var self=this;setTimeout(function(){'
+                    . 'try{Object.defineProperty(self,"readyState",{value:4,configurable:true});'
+                    . 'Object.defineProperty(self,"status",{value:204,configurable:true});'
+                    . 'Object.defineProperty(self,"responseText",{value:"",configurable:true});'
+                    . 'if(typeof self.onreadystatechange==="function")self.onreadystatechange();'
+                    . 'if(typeof self.onload==="function")self.onload();'
+                    . '}catch(e){}'
+                . '},0);return;'
+            . '}'
+            . 'return _origSend.apply(this,arguments);'
+        . '};'
+        . 'if(navigator.sendBeacon){var _origBeacon=navigator.sendBeacon.bind(navigator);'
+            . 'navigator.sendBeacon=function(url,data){'
+                . 'try{if(typeof url==="string" && url.indexOf("/cdn-cgi/")!==-1)return true;}catch(e){}'
+                . 'return _origBeacon(url,data);'
+            . '};}'
+        . '}catch(e){}'
         . '})();</script>';
 
     // ---------------- Cosmetic hider ----------------
