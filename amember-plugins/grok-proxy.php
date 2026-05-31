@@ -296,6 +296,27 @@ if ($isHtml && $body !== '') {
         . 'setUser:function(){},setTag:function(){},setExtra:function(){},setContext:function(){},'
         . 'getCurrentHub:function(){return{getClient:function(){return null;},getScope:function(){return{setTag:function(){},setUser:function(){}};}};}'
         . '};}catch(e){}'
+        // Swallow stream-related errors that bubble up to React\'s error
+        // boundary. Our PHP proxy buffers responses, which means any RSC
+        // streaming fetch on the upstream looks "closed" before the
+        // client expects. Catching the error at window level lets the
+        // page keep rendering even when streaming fails.
+        . 'try{var BAD=/connection closed|aborted|network error|failed to fetch|stream/i;'
+        . 'window.addEventListener("error",function(e){'
+            . 'if(e && e.message && BAD.test(e.message)){e.preventDefault();e.stopImmediatePropagation();return false;}'
+        . '},true);'
+        . 'window.addEventListener("unhandledrejection",function(e){'
+            . 'try{var msg=(e&&e.reason)?(e.reason.message||String(e.reason)):"";'
+            . 'if(BAD.test(msg)){e.preventDefault();return false;}}catch(_){}'
+        . '});'
+        // Also wrap console.error so React doesn\'t see "Connection closed"
+        // in its error-recording path.
+        . 'var _origCE=console.error;console.error=function(){'
+            . 'try{var s=Array.prototype.slice.call(arguments).map(String).join(" ");'
+            . 'if(BAD.test(s))return;}catch(_){}'
+            . 'return _origCE.apply(console,arguments);'
+        . '};'
+        . '}catch(e){}'
         // Swallow Cloudflare RUM beacons. The minified JS posts to
         // /cdn-cgi/rum on every interaction; if the response isn\'t 200,
         // their callback throws an exception that bubbles up to React\'s
