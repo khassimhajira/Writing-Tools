@@ -71,6 +71,18 @@ const JWT_EXPIRY = process.env.JWT_EXPIRY || '7d';
 const TURNSTILE_SECRET = process.env.TURNSTILE_SECRET_KEY || '';
 const TURNSTILE_SITE_KEY = process.env.TURNSTILE_SITE_KEY || '';
 
+// Cookie options shared by every place we set or clear stealth_hub_token.
+// `domain: '.scholargenie.org'` makes the cookie sharable across subdomains
+// (tools.*, writehuman.*, grok.* etc) so PHP passthrough proxies on
+// subdomains can validate the Hub session via /hub/api/auth/me.
+const HUB_COOKIE_OPTS = {
+    httpOnly: true,
+    sameSite: 'Lax',
+    secure: process.env.NODE_ENV === 'production',
+    domain: '.scholargenie.org',
+    path: '/'
+};
+
 // --- IDLE TIMEOUT ---
 // If the user is inactive for this many minutes, the session expires and
 // they're auto-logged out. "Active" means real user input (clicks, key
@@ -265,10 +277,7 @@ async function issueSession(req, res, user) {
         { expiresIn: JWT_EXPIRY }
     );
     res.cookie('stealth_hub_token', token, {
-        httpOnly: true,
-        sameSite: 'Lax',
-        secure: process.env.NODE_ENV === 'production',
-        path: '/',
+        ...HUB_COOKIE_OPTS,
         maxAge: 7 * 24 * 60 * 60 * 1000
     });
     return sessionId;
@@ -404,7 +413,7 @@ router.get('/logout', async (req, res) => {
             }
         }
     } catch (_) {}
-    res.clearCookie('stealth_hub_token');
+    res.clearCookie('stealth_hub_token', { domain: '.scholargenie.org', path: '/' });
     res.redirect('https://app.scholargenie.org/login/logout');
 });
 
@@ -459,7 +468,7 @@ router.get('/me', async (req, res) => {
     } catch(e) {
         if (e.code === 'KICKED') return res.status(401).json({ error: 'Session ended on another device.', code: 'KICKED' });
         if (e.code === 'IDLE_TIMEOUT') {
-            res.clearCookie('stealth_hub_token');
+            res.clearCookie('stealth_hub_token', { domain: '.scholargenie.org', path: '/' });
             return res.status(401).json({ error: 'Session timed out due to inactivity.', code: 'IDLE_TIMEOUT' });
         }
         if (e.code === 'BLOCKED') return res.status(403).json({ error: 'Account suspended' });
@@ -488,7 +497,7 @@ router.post('/heartbeat', async (req, res) => {
     } catch(e) {
         if (e.code === 'KICKED') return res.status(401).json({ error: 'Session ended on another device.', code: 'KICKED' });
         if (e.code === 'IDLE_TIMEOUT') {
-            res.clearCookie('stealth_hub_token');
+            res.clearCookie('stealth_hub_token', { domain: '.scholargenie.org', path: '/' });
             return res.status(401).json({ error: 'Session timed out due to inactivity.', code: 'IDLE_TIMEOUT' });
         }
         res.status(401).json({ error: 'Invalid token' });
@@ -556,7 +565,7 @@ router.get('/services', async (req, res) => {
     } catch(e) {
         if (e.code === 'KICKED') return res.status(401).json({ error: 'Session ended on another device.', code: 'KICKED' });
         if (e.code === 'IDLE_TIMEOUT') {
-            res.clearCookie('stealth_hub_token');
+            res.clearCookie('stealth_hub_token', { domain: '.scholargenie.org', path: '/' });
             return res.status(401).json({ error: 'Session timed out due to inactivity.', code: 'IDLE_TIMEOUT' });
         }
         console.error('Error fetching user services:', e);
@@ -675,7 +684,7 @@ router.get('/my-usage/:slug', async (req, res) => {
     } catch(e) {
         if (e.code === 'KICKED') return res.status(401).json({ error: 'Session ended on another device.', code: 'KICKED' });
         if (e.code === 'IDLE_TIMEOUT') {
-            res.clearCookie('stealth_hub_token');
+            res.clearCookie('stealth_hub_token', { domain: '.scholargenie.org', path: '/' });
             return res.status(401).json({ error: 'Session timed out due to inactivity.', code: 'IDLE_TIMEOUT' });
         }
         console.error('my-usage error:', e);

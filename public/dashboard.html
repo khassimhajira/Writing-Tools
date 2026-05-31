@@ -340,10 +340,19 @@
         function launchPortal(slug) {
             document.body.classList.add('portal-open');
             const frame = document.getElementById('portal-frame');
-            frame.src = '/proxy/' + slug.trim();
+            // Subdomain-proxied services (those that bypass the path proxy
+            // because path-prefix breaks their Next.js bundle) get launched
+            // directly on their own subdomain. Everything else uses the
+            // default /proxy/<slug>/ Hub path proxy.
+            const SUBDOMAIN_PROXIES = {
+                writehuman: 'https://writehuman.scholargenie.org/'
+                // Future: grok: 'https://grok.scholargenie.org/' etc.
+            };
+            const s = slug.trim();
+            frame.src = SUBDOMAIN_PROXIES[s] || ('/proxy/' + s);
             frame.style.display = 'block';
             document.getElementById('portal-exit').style.display = 'flex';
-            startPortalUsage(slug.trim());
+            startPortalUsage(s);
         }
 
         function exitPortal() {

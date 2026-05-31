@@ -147,7 +147,7 @@ app.get('/dashboard', async (req, res) => {
         res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
     } catch(e) {
         // Whether it's a bad token, expired, kicked, or blocked — bounce.
-        res.clearCookie('stealth_hub_token');
+        res.clearCookie('stealth_hub_token', { domain: '.scholargenie.org', path: '/' });
         res.redirect('https://app.scholargenie.org/login');
     }
 });
@@ -167,7 +167,7 @@ app.get('/admin', async (req, res) => {
         return res.sendFile(path.join(__dirname, 'public', 'admin-login.html'));
     } catch(e) {
         // Bad/expired/kicked token -- clear cookie and show login.
-        res.clearCookie('stealth_hub_token');
+        res.clearCookie('stealth_hub_token', { domain: '.scholargenie.org', path: '/' });
         return res.sendFile(path.join(__dirname, 'public', 'admin-login.html'));
     }
 });
@@ -795,7 +795,7 @@ app.use(async (req, res, next) => {
         try {
             const dbUser = await get('SELECT session_id FROM users WHERE id = ?', [verified.id]);
             if (dbUser && dbUser.session_id && verified.sid && dbUser.session_id !== verified.sid) {
-                res.clearCookie('stealth_hub_token');
+                res.clearCookie('stealth_hub_token', { domain: '.scholargenie.org', path: '/' });
                 return res.status(401).send('<div style="font-family:sans-serif;text-align:center;margin-top:18%;padding:20px;color:#0f172a;"><h2 style="color:#7c3aed;margin:0 0 10px;">Session Ended</h2><p style="color:#475569;">You signed in on another device. Please log in again to continue.</p><p style="margin-top:20px;"><a href="/dashboard" style="color:#7c3aed;font-weight:600;text-decoration:none;">Return to login &rarr;</a></p></div>');
             }
             // Idle timeout check.
@@ -806,7 +806,7 @@ app.use(async (req, res, next) => {
                 if (snap && snap.last_active && (Date.now() - Number(snap.last_active)) > idleMs) {
                     await run('UPDATE users SET session_id = NULL WHERE id = ?', [verified.id]);
                     await run('DELETE FROM user_sessions WHERE user_id = ?', [verified.id]);
-                    res.clearCookie('stealth_hub_token');
+                    res.clearCookie('stealth_hub_token', { domain: '.scholargenie.org', path: '/' });
                     return res.status(401).send('<div style="font-family:sans-serif;text-align:center;margin-top:18%;padding:20px;color:#0f172a;"><h2 style="color:#7c3aed;margin:0 0 10px;">Session timed out</h2><p style="color:#475569;">You were inactive for too long. Please log in again to continue.</p><p style="margin-top:20px;"><a href="/dashboard" style="color:#7c3aed;font-weight:600;text-decoration:none;">Return to login &rarr;</a></p></div>');
                 }
             }

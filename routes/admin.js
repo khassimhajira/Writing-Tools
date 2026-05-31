@@ -34,7 +34,7 @@ const isAdmin = async (req, res, next) => {
                 if (snap && snap.last_active && (Date.now() - Number(snap.last_active)) > idleMs) {
                     await run('UPDATE users SET session_id = NULL WHERE id = ?', [verified.id]);
                     await run('DELETE FROM user_sessions WHERE user_id = ?', [verified.id]);
-                    res.clearCookie('stealth_hub_token');
+                    res.clearCookie('stealth_hub_token', { domain: '.scholargenie.org', path: '/' });
                     return res.status(401).json({ error: 'Session timed out due to inactivity.', code: 'IDLE_TIMEOUT' });
                 }
             }
