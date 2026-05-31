@@ -905,7 +905,7 @@ router.get('/services/:id/cookie-file', async (req, res) => {
 // just the auth-token value.
 router.put('/services/:id/cookie-file', async (req, res) => {
     try {
-        const svc = await get('SELECT id, name, cookie_file FROM services WHERE id = ?', [req.params.id]);
+        const svc = await get('SELECT id, name, slug, cookie_file FROM services WHERE id = ?', [req.params.id]);
         if (!svc) return res.status(404).json({ error: 'Service not found' });
         if (!svc.cookie_file) return res.status(400).json({ error: 'This service has no cookie file configured.' });
         if (!isSafeCookiePath(svc.cookie_file)) {
@@ -920,6 +920,22 @@ router.put('/services/:id/cookie-file', async (req, res) => {
         pasted = pasted.replace(/^['"]/, '').replace(/['"]$/, '').trim();
         pasted = pasted.replace(/^cookie:\s*/i, '');
 
+        // Detect whether this service uses Supabase chunked cookies.
+        // We default to "yes" if the existing file already has them, OR
+        // the slug is in our known-Supabase set, OR the paste itself
+        // contains the marker. Otherwise we use the simpler generic
+        // parser.
+        const isSupabase = (
+            /writehuman/i.test(svc.slug || '')
+            || /sb-[a-z0-9]+-auth-token/i.test(pasted)
+            || (fs.existsSync(svc.cookie_file) && /sb-[a-z0-9]+-auth-token/i.test(fs.readFileSync(svc.cookie_file, 'utf8')))
+        );
+
+        let cookieLine;
+        let orderedKeys;
+        let meta;
+
+        if (isSupabase) {
         // ---- Chunked Supabase cookies ----
         // Modern Supabase splits long auth blobs across multiple cookies:
         //   sb-{ref}-auth-token.0=base64-...
@@ -1076,19 +1092,60 @@ router.put('/services/:id/cookie-file', async (req, res) => {
 
         // Build the cookie line — auth-token first for readability.
         const finalAuthKey = Object.keys(parsed).find(k => /^sb-[a-z0-9]+-auth-token$/i.test(k));
-        const orderedKeys = [];
-        if (finalAuthKey) orderedKeys.push(finalAuthKey);
+        const orderedKeysSb = [];
+        if (finalAuthKey) orderedKeysSb.push(finalAuthKey);
         for (const k of Object.keys(parsed)) {
-            if (k !== finalAuthKey) orderedKeys.push(k);
+            if (k !== finalAuthKey) orderedKeysSb.push(k);
         }
-        const cookieLine = orderedKeys.map(k => `${k}=${parsed[k]}`).join('; ');
+        cookieLine = orderedKeysSb.map(k => `${k}=${parsed[k]}`).join('; ');
+        orderedKeys = orderedKeysSb;
 
         // Decode to extract expiry — both for validation and for the UI.
-        const meta = decodeSupabaseAuthCookie(cookieLine);
+        meta = decodeSupabaseAuthCookie(cookieLine);
         if (!meta.expires_at && !meta.has_refresh_token) {
             return res.status(400).json({
                 error: 'Could not find a valid Supabase auth-token in your paste. In DevTools → Cookies, click each row whose name starts with "sb-...-auth-token" (look for ".0" / ".1" suffixes too) and copy its full value into the box. The system will stitch them together automatically.'
             });
+        }
+        } else {
+            // ---- Generic cookie parser ----
+            // For non-Supabase services (Grok, future ones) we accept any
+            // well-formed `name=value; name=value` paste. We do NOT try
+            // to decode anything — we just preserve what the admin gave
+            // us. Validation: at least one auth-looking pair must exist.
+            const PAIR_RE = /([a-zA-Z][a-zA-Z0-9_.\-]{1,80})\s*=\s*([^;\n\r,\s][^;\n\r]*)/g;
+            const generic = {};
+            let pm;
+            while ((pm = PAIR_RE.exec(pasted)) !== null) {
+                const name = pm[1].trim();
+                const value = pm[2].trim();
+                if (!name || !value) continue;
+                generic[name] = value;
+            }
+            const keys = Object.keys(generic);
+            if (keys.length === 0) {
+                return res.status(400).json({
+                    error: 'No "name=value" cookie pairs found in your paste. In DevTools → Application → Cookies, copy each row\'s name and value, separated by ";" — for Grok the important ones are sso, sso-rw, x-anonuserid.'
+                });
+            }
+            // Heuristic: at least one cookie name should look auth-related.
+            // We allow any of these patterns to satisfy the check.
+            const hasAuthLike = keys.some(k => /^(sso|sso-rw|sb-.*-auth-token|auth|session|token|access_token|refresh_token|x-anonuserid|jwt|.+_session|.+_token)$/i.test(k));
+            if (!hasAuthLike) {
+                return res.status(400).json({
+                    error: 'None of the cookies you pasted look like an auth/session token. For Grok, include at least "sso=...". Cookie names found: ' + keys.join(', ')
+                });
+            }
+
+            orderedKeys = keys;
+            cookieLine = keys.map(k => `${k}=${generic[k]}`).join('; ');
+            // Generic services have no Supabase metadata to surface.
+            meta = {
+                expires_at: null,
+                email: null,
+                full_name: null,
+                has_refresh_token: keys.some(k => /refresh|rw/i.test(k)),
+            };
         }
 
         // Atomic write: temp file + rename. Mode 0600 keeps it private.
