@@ -135,6 +135,51 @@ if ($err) {
 $rawHeaders = substr($response, 0, $headerSize);
 $body       = substr($response, $headerSize);
 
+// ---------------- Rewrite absolute writehuman.ai URLs to our subdomain ----------------
+// Without this, every <link>, <script src=...>, <a href=...>, fetch URL,
+// CSP directive, etc. that points at "https://writehuman.ai" forces the
+// browser to leave our domain — which then fails because writehuman.ai
+// has frame-ancestors 'none'.
+//
+// We only rewrite text/html, application/json, application/javascript,
+// and text/css — binary content (images, fonts) is left alone.
+$contentTypeHeader = '';
+foreach (preg_split("/\r?\n/", $rawHeaders) as $line) {
+    if (stripos($line, 'content-type:') === 0) { $contentTypeHeader = strtolower($line); break; }
+}
+$shouldRewrite = (
+    strpos($contentTypeHeader, 'text/html') !== false ||
+    strpos($contentTypeHeader, 'application/json') !== false ||
+    strpos($contentTypeHeader, 'application/javascript') !== false ||
+    strpos($contentTypeHeader, 'text/javascript') !== false ||
+    strpos($contentTypeHeader, 'text/css') !== false ||
+    strpos($contentTypeHeader, 'text/x-component') !== false
+);
+
+if ($shouldRewrite && $body !== '') {
+    // 1. Replace https://writehuman.ai with our subdomain origin everywhere
+    //    in the body. Cover both http and protocol-relative variants.
+    $proxyHost = $_SERVER['HTTP_HOST'] ?? 'writehuman.scholargenie.org';
+    $body = str_replace('https://writehuman.ai',  'https://' . $proxyHost, $body);
+    $body = str_replace('http://writehuman.ai',   'https://' . $proxyHost, $body);
+    $body = str_replace('//writehuman.ai',        '//' . $proxyHost, $body);
+
+    // 2. JSON sometimes encodes URLs with escaped slashes (\/).
+    $body = str_replace('https:\\/\\/writehuman.ai',  'https:\\/\\/' . $proxyHost, $body);
+
+    // 3. Inject a <base href> so any remaining relative references resolve
+    //    against the proxy host. Defensive — most refs are already
+    //    relative or rewritten above.
+    if (strpos($contentTypeHeader, 'text/html') !== false) {
+        $body = preg_replace(
+            '/<head([^>]*)>/i',
+            '<head$1><base href="https://' . htmlspecialchars($proxyHost, ENT_QUOTES) . '/">',
+            $body,
+            1
+        );
+    }
+}
+
 // ---------------- Forward upstream headers ----------------
 http_response_code($status);
 foreach (preg_split("/\r?\n/", $rawHeaders) as $line) {
@@ -144,12 +189,25 @@ foreach (preg_split("/\r?\n/", $rawHeaders) as $line) {
     if (str_starts_with($low, 'content-encoding:'))  continue;
     if (str_starts_with($low, 'transfer-encoding:')) continue;
     if (str_starts_with($low, 'content-length:'))    continue;
+    // Strip ALL CSP / framing protection headers — these would block our
+    // iframe embed and any inline behavior we need.
     if (str_starts_with($low, 'content-security-policy:'))  continue;
+    if (str_starts_with($low, 'content-security-policy-report-only:')) continue;
     if (str_starts_with($low, 'x-frame-options:'))   continue;
+    if (str_starts_with($low, 'cross-origin-opener-policy:')) continue;
+    if (str_starts_with($low, 'cross-origin-embedder-policy:')) continue;
+    if (str_starts_with($low, 'cross-origin-resource-policy:')) continue;
     // Rewrite Set-Cookie domain so cookies stick to OUR subdomain, not writehuman.ai.
     if (str_starts_with($low, 'set-cookie:')) {
         $rewritten = preg_replace('/;\s*Domain=[^;]+/i', '', $line);
         $rewritten = preg_replace('/;\s*SameSite=None/i', '; SameSite=Lax', $rewritten);
+        header($rewritten, false);
+        continue;
+    }
+    // Rewrite Location redirect if it points at writehuman.ai.
+    if (str_starts_with($low, 'location:')) {
+        $proxyHost = $_SERVER['HTTP_HOST'] ?? 'writehuman.scholargenie.org';
+        $rewritten = preg_replace('#https?://writehuman\.ai#i', 'https://' . $proxyHost, $line);
         header($rewritten, false);
         continue;
     }
