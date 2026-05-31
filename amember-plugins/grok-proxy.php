@@ -173,7 +173,7 @@ if (is_readable($COOKIE_FILE)) {
 // React error boundary ("Something went wrong"). Returning a benign
 // 204 No Content tells the beacon it succeeded and the page keeps
 // running.
-if (preg_match('#^/cdn-cgi/#', $path) || preg_match('#^/monitoring(\?|$)#', $path)) {
+if (preg_match('#^/cdn-cgi/#', $path) || preg_match('#^/monitoring\?o=\d+&p=\d+#', $path)) {
     http_response_code(204);
     header('Content-Length: 0');
     header('Cache-Control: no-store');
@@ -532,29 +532,35 @@ if ($isHtml && $body !== '') {
             . 'if(u.indexOf("http://grok.com")===0)return "https://"+PROXY_HOST+u.slice(15);'
             . 'if(u.indexOf("//grok.com")===0)return "//"+PROXY_HOST+u.slice(10);'
             . 'if(u.indexOf("https://assets.grok.com")===0)return "https://"+PROXY_HOST+"/__grok_assets"+u.slice(23);'
-            // Note: cdn.grok.com is intentionally left alone — let the
-            // browser fetch chunks directly from Cloudflare with its
-            // real IP & fingerprint. Routing through us trips bot mode.
             . '}catch(e){}return u;'
+        . '}'
+        // Narrow telemetry stub: only short-circuit beacons to known
+        // telemetry endpoints. Earlier `/monitoring/` matcher was too
+        // broad and was swallowing legitimate Grok API paths.
+        . 'function _isTelemetry(url){'
+            . 'try{return url.indexOf("/cdn-cgi/rum")!==-1 || url.indexOf("/cdn-cgi/speedbrain")!==-1 || url.indexOf("/cdn-cgi/zaraz")!==-1 || /\\/monitoring\\?o=[0-9]+&p=[0-9]+/.test(url) || url.indexOf("sentry-cdn.com")!==-1 || url.indexOf(".ingest.sentry.io")!==-1;}catch(e){return false;}'
         . '}'
         . 'var _origFetch=window.fetch;'
         . 'window.fetch=function(input,init){'
             . 'try{var url=typeof input==="string"?input:(input&&input.url)||"";'
-            . 'if(url && (url.indexOf("/cdn-cgi/")!==-1 || url.indexOf("/monitoring?")!==-1 || url.indexOf("/monitoring/")!==-1)){return Promise.resolve(new Response(null,{status:204,statusText:"No Content"}));}'
+            . 'if(url && _isTelemetry(url)){return Promise.resolve(new Response(null,{status:204,statusText:"No Content"}));}'
             . 'if(typeof input==="string"){var ru=_rewriteUrl(input);if(ru!==input)input=ru;}'
-            . 'else if(input && input.url){var ru2=_rewriteUrl(input.url);if(ru2!==input.url){input=new Request(ru2,input);}}'
+            // For Request inputs we leave the URL alone — cloning a
+            // Request consumes its stream body, which would break
+            // streaming POSTs. Grok\'s frontend already constructs
+            // requests with the relative paths after our HTML rewrite.
             . '}catch(e){}'
             . 'return _origFetch.apply(this,[input,init]);'
         . '};'
         . 'var _origSend=XMLHttpRequest.prototype.send;'
         . 'var _origOpen=XMLHttpRequest.prototype.open;'
         . 'XMLHttpRequest.prototype.open=function(method,url){'
-            . 'this.__cdn_cgi=(typeof url==="string"&&(url.indexOf("/cdn-cgi/")!==-1||url.indexOf("/monitoring?")!==-1||url.indexOf("/monitoring/")!==-1));'
+            . 'this.__telemetry=(typeof url==="string"&&_isTelemetry(url));'
             . 'if(typeof url==="string")arguments[1]=_rewriteUrl(url);'
             . 'return _origOpen.apply(this,arguments);'
         . '};'
         . 'XMLHttpRequest.prototype.send=function(){'
-            . 'if(this.__cdn_cgi){'
+            . 'if(this.__telemetry){'
                 . 'var self=this;setTimeout(function(){'
                     . 'try{Object.defineProperty(self,"readyState",{value:4,configurable:true});'
                     . 'Object.defineProperty(self,"status",{value:204,configurable:true});'
@@ -584,10 +590,27 @@ if ($isHtml && $body !== '') {
         . '}catch(e){}'
         . 'if(navigator.sendBeacon){var _origBeacon=navigator.sendBeacon.bind(navigator);'
             . 'navigator.sendBeacon=function(url,data){'
-                . 'try{if(typeof url==="string" && (url.indexOf("/cdn-cgi/")!==-1||url.indexOf("/monitoring")!==-1))return true;'
+                . 'try{if(typeof url==="string" && _isTelemetry(url))return true;'
                 . 'if(typeof url==="string")url=_rewriteUrl(url);}catch(e){}'
                 . 'return _origBeacon(url,data);'
             . '};}'
+        . '}catch(e){}'
+        // Last-resort: if React\'s error boundary still trips on a
+        // streaming hiccup, hide the boundary fallback UI so the chat
+        // mounts underneath. We look for the unique fallback text and
+        // remove it from the DOM. Mutation observer keeps applying.
+        . 'try{function _hideErrBoundary(){'
+            . 'var nodes=document.querySelectorAll("h1,h2,h3,p,div");'
+            . 'for(var i=0;i<nodes.length;i++){'
+                . 'var t=(nodes[i].textContent||"").trim();'
+                . 'if(t==="Something went wrong" || t==="Something unexpected happened. We\'re working to prevent this in the future."){'
+                    . 'var p=nodes[i].closest("[role=\\"alert\\"]")||nodes[i].parentElement;'
+                    . 'if(p && !p.__hidByProxy){p.__hidByProxy=true;p.style.display="none";}'
+                . '}'
+            . '}'
+        . '}'
+        . 'function _bootHide(){_hideErrBoundary();var mo=new MutationObserver(_hideErrBoundary);mo.observe(document.documentElement,{subtree:true,childList:true});}'
+        . 'if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",_bootHide);else _bootHide();'
         . '}catch(e){}'
         . '})();</script>';
 
