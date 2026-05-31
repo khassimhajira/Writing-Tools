@@ -211,6 +211,52 @@ $INJECT = '<script>(function(){'
     . 'try{Object.defineProperty(location,"hostname",{configurable:true,get:function(){return "grok.com";}});'
     . 'Object.defineProperty(location,"host",{configurable:true,get:function(){return "grok.com";}});'
     . '}catch(e){}'
+    // Intercept location.assign / replace / href setters so anything
+    // that tries to navigate the iframe to grok.com gets routed back to
+    // our subdomain. This catches Grok\'s "wrong host detected, fix it
+    // by redirecting" code paths.
+    . 'try{var _PH=location.host;'
+    . 'function _fixLoc(u){'
+        . 'try{if(typeof u!=="string")return u;'
+        . 'if(u.indexOf("https://grok.com")===0)return "https://"+_PH+u.slice(16);'
+        . 'if(u.indexOf("http://grok.com")===0)return "https://"+_PH+u.slice(15);'
+        . 'if(u.indexOf("//grok.com")===0)return "//"+_PH+u.slice(10);'
+        . '}catch(e){}return u;'
+    . '}'
+    . 'var _origAssign=location.assign.bind(location);'
+    . 'var _origReplace=location.replace.bind(location);'
+    . 'location.assign=function(u){return _origAssign(_fixLoc(u));};'
+    . 'location.replace=function(u){return _origReplace(_fixLoc(u));};'
+    // window.open too — Grok may open an oauth window pointing to grok.com.
+    . 'var _origOpen=window.open;'
+    . 'window.open=function(u,t,f){return _origOpen.call(window,_fixLoc(u),t,f);};'
+    // Iframe src — set via setAttribute or property. Patch
+    // HTMLIFrameElement to rewrite src on assignment.
+    . 'var _ifDesc=Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype,"src")||Object.getOwnPropertyDescriptor(HTMLElement.prototype,"src");'
+    . 'if(_ifDesc && _ifDesc.set){var _origSet=_ifDesc.set;Object.defineProperty(HTMLIFrameElement.prototype,"src",{configurable:true,enumerable:true,get:_ifDesc.get,set:function(v){return _origSet.call(this,_fixLoc(v));}});}'
+    . '}catch(e){}'
+    // Strip CSP / X-Frame meta tags as soon as they appear. Grok\'s SSR
+    // injects <meta http-equiv="Content-Security-Policy" content="...
+    // frame-ancestors x.com ..."> which the browser enforces at parse
+    // time, blocking us from rendering inside the iframe. We use a
+    // MutationObserver fallback AND poll the head for a few seconds.
+    . 'try{function _stripCspMeta(){'
+        . 'var metas=document.querySelectorAll("meta[http-equiv]");'
+        . 'for(var i=0;i<metas.length;i++){'
+            . 'var v=(metas[i].getAttribute("http-equiv")||"").toLowerCase();'
+            . 'if(v==="content-security-policy"||v==="x-frame-options"){'
+                . 'try{metas[i].remove();}catch(e){}'
+            . '}'
+        . '}'
+    . '}'
+    . '_stripCspMeta();'
+    . 'if(document.documentElement){'
+        . 'var _cspObs=new MutationObserver(_stripCspMeta);'
+        . '_cspObs.observe(document.documentElement,{subtree:true,childList:true});'
+        // Stop observing after 5s — by then the head is parsed.
+        . 'setTimeout(function(){try{_cspObs.disconnect();}catch(e){}},5000);'
+    . '}'
+    . '}catch(e){}'
     . 'try{window.__SENTRY__={};window.SENTRY_RELEASE={};window.Sentry={'
     . 'init:function(){},captureException:function(){},captureMessage:function(){},'
     . 'addBreadcrumb:function(){},configureScope:function(){},withScope:function(fn){try{fn({setTag:function(){},setExtra:function(){},setUser:function(){}})}catch(e){}},'
@@ -236,7 +282,22 @@ $INJECT = '<script>(function(){'
         . '}catch(e){}return u;'
     . '}'
     . 'function _tele(url){'
-        . 'try{return url.indexOf("/cdn-cgi/rum")!==-1 || url.indexOf("/cdn-cgi/speedbrain")!==-1 || url.indexOf("/cdn-cgi/zaraz")!==-1 || /\\/monitoring\\?o=[0-9]+&p=[0-9]+/.test(url) || url.indexOf("sentry-cdn.com")!==-1 || url.indexOf(".ingest.sentry.io")!==-1;}catch(e){return false;}'
+        // Only stub TRUE telemetry endpoints — anything that\'s strictly
+        // observability and won\'t affect Grok\'s app logic. We\'re narrow
+        // here on purpose: a too-broad stub looks like "FetchError" to
+        // Grok\'s API client and trips the React error boundary.
+        . 'try{'
+            . 'if(url.indexOf("/cdn-cgi/rum")!==-1)return true;'
+            . 'if(url.indexOf("/cdn-cgi/speedbrain")!==-1)return true;'
+            . 'if(url.indexOf("/cdn-cgi/zaraz")!==-1)return true;'
+            . 'if(url.indexOf("sentry-cdn.com")!==-1)return true;'
+            . 'if(url.indexOf(".ingest.sentry.io")!==-1)return true;'
+            // Grok\'s sentry monitoring path (note: project endpoints
+            // also live under /monitoring sometimes; only short-circuit
+            // when the query string explicitly includes Sentry\'s o= and p=
+            // params).
+            . 'if(/[?&]o=\\d+/.test(url) && /[?&]p=\\d+/.test(url) && url.indexOf("/monitoring")!==-1)return true;'
+        . '}catch(e){}return false;'
     . '}'
     . 'var _of=window.fetch;'
     . 'window.fetch=function(input,init){'
@@ -368,6 +429,11 @@ $_headersFlushed  = false;
 $_headBuffer      = '';       // only used while waiting for <head>
 $_headInjected    = false;
 $_cookiesPlanted  = false;
+// Sliding-window tail used to defang inline <meta http-equiv="Content-
+// Security-Policy"> tags that appear AFTER head injection. We hold back
+// the last ~512 bytes of the stream so we can scan-and-rewrite across
+// chunk boundaries before flushing.
+$_streamTail      = '';
 
 $ch = curl_init($upstreamUrl);
 curl_setopt_array($ch, [
@@ -392,8 +458,32 @@ curl_setopt_array($ch, [
     },
     CURLOPT_WRITEFUNCTION => function ($ch, $chunk) use (
         &$_responseHeaders, &$_responseStatus, &$_isHtml, &$_headersFlushed,
-        &$_headBuffer, &$_headInjected, &$_cookiesPlanted, $INJECT, $plantCookies, $PROXY_HOST
+        &$_headBuffer, &$_headInjected, &$_cookiesPlanted, &$_streamTail,
+        $INJECT, $plantCookies, $PROXY_HOST
     ) {
+        // Helper: defang any <meta http-equiv="Content-Security-Policy">
+        // and <meta http-equiv="X-Frame-Options"> tags by changing the
+        // http-equiv value to something the browser ignores. Keeps the
+        // stream byte-aligned (same length).
+        $defangCsp = function ($s) {
+            $s = preg_replace_callback(
+                '/http-equiv\s*=\s*["\'](Content-Security-Policy|X-Frame-Options|Content-Security-Policy-Report-Only)["\']/i',
+                function ($m) {
+                    // Pad to same length so byte offsets don\'t shift.
+                    $orig = $m[1];
+                    $repl = 'x-disabled-csp-by-proxy-' . str_pad('', max(0, strlen($orig) - 24), 'x');
+                    if (strlen($repl) < strlen($orig)) {
+                        $repl = str_pad($repl, strlen($orig), 'x');
+                    } elseif (strlen($repl) > strlen($orig)) {
+                        $repl = substr($repl, 0, strlen($orig));
+                    }
+                    return 'http-equiv="' . $repl . '"';
+                },
+                $s
+            );
+            return $s;
+        };
+
         // Determine HTML-ness once.
         if ($_isHtml === null) {
             $ct = '';
@@ -431,18 +521,17 @@ curl_setopt_array($ch, [
             return strlen($chunk);
         }
 
-        // HTML: search for <head> while buffering. Once found, emit
-        // everything-up-to-and-including-<head> + INJECT, then stream
-        // the rest of this chunk and all future chunks verbatim.
+        // HTML pre-injection: buffer until we see <head>, then inject.
         if (!$_headInjected) {
             $_headBuffer .= $chunk;
-            // Look for <head ...>
             if (preg_match('/<head[^>]*>/i', $_headBuffer, $m, PREG_OFFSET_CAPTURE)) {
                 $tag = $m[0][0];
                 $tagPos = $m[0][1];
                 $tagEnd = $tagPos + strlen($tag);
                 $before = substr($_headBuffer, 0, $tagEnd);
                 $after  = substr($_headBuffer, $tagEnd);
+                // Defang any meta-CSP that\'s already in the buffered head section.
+                $after = $defangCsp($after);
                 $base   = '<base href="https://' . htmlspecialchars($PROXY_HOST, ENT_QUOTES) . '/">';
                 echo $before . $INJECT . $base . $after;
                 if (function_exists('flush')) @flush();
@@ -450,10 +539,8 @@ curl_setopt_array($ch, [
                 $_headInjected = true;
                 return strlen($chunk);
             }
-            // Safety: if we\'ve buffered >256KB without seeing <head>,
-            // give up and flush what we have.
             if (strlen($_headBuffer) > 262144) {
-                echo $_headBuffer;
+                echo $defangCsp($_headBuffer);
                 if (function_exists('flush')) @flush();
                 $_headBuffer = '';
                 $_headInjected = true;
@@ -461,9 +548,18 @@ curl_setopt_array($ch, [
             return strlen($chunk);
         }
 
-        // <head> already injected — pure passthrough.
-        echo $chunk;
-        if (function_exists('flush')) @flush();
+        // HTML post-injection: pure passthrough WITH meta-CSP defanging
+        // via a sliding-window tail. We hold back the last 512 bytes so
+        // a meta-CSP tag that crosses a chunk boundary still gets caught.
+        $combined = $_streamTail . $chunk;
+        if (strlen($combined) > 512) {
+            $emit = substr($combined, 0, strlen($combined) - 512);
+            $_streamTail = substr($combined, -512);
+            echo $defangCsp($emit);
+            if (function_exists('flush')) @flush();
+        } else {
+            $_streamTail = $combined;
+        }
         return strlen($chunk);
     },
 ]);
@@ -494,6 +590,25 @@ if (!$_headersFlushed) {
 if ($_isHtml && !$_headInjected && $_headBuffer !== '') {
     echo $_headBuffer;
     if (function_exists('flush')) @flush();
+}
+
+// Flush any held-back tail bytes from the sliding-window meta-CSP defang.
+if ($_isHtml && $_headInjected && $_streamTail !== '') {
+    // Run one final defang on the tail before flushing.
+    $tail = preg_replace_callback(
+        '/http-equiv\s*=\s*["\'](Content-Security-Policy|X-Frame-Options|Content-Security-Policy-Report-Only)["\']/i',
+        function ($m) {
+            $orig = $m[1];
+            $repl = 'x-disabled-csp-by-proxy-' . str_pad('', max(0, strlen($orig) - 24), 'x');
+            if (strlen($repl) < strlen($orig)) $repl = str_pad($repl, strlen($orig), 'x');
+            elseif (strlen($repl) > strlen($orig)) $repl = substr($repl, 0, strlen($orig));
+            return 'http-equiv="' . $repl . '"';
+        },
+        $_streamTail
+    );
+    echo $tail;
+    if (function_exists('flush')) @flush();
+    $_streamTail = '';
 }
 
 if ($err) error_log('[grok-proxy] curl error after partial response: ' . $err);
