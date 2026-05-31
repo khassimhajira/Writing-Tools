@@ -187,6 +187,10 @@ if (preg_match('#^/cdn-cgi/#', $path) || preg_match('#^/monitoring(\?|$)#', $pat
 // interceptor. We rewrite the path back here and forward to the real
 // CDN. Some assets (avatars, private uploads) require auth, so we
 // forward the upstream session cookies too.
+//
+// CRITICAL: cdn.grok.com is also behind Cloudflare and challenges
+// Hostinger's datacenter IP. We must route asset/CDN requests through
+// the same residential proxy pool we use for the main upstream.
 if (preg_match('#^/__grok_(assets|cdn)(/.*)?$#', $path, $assetMatch)) {
     $cdnHost   = ($assetMatch[1] === 'cdn') ? 'cdn.grok.com' : 'assets.grok.com';
     $assetPath = $assetMatch[2] ?? '/';
@@ -194,10 +198,14 @@ if (preg_match('#^/__grok_(assets|cdn)(/.*)?$#', $path, $assetMatch)) {
     $upstreamCookieForAsset = '';
     if (is_readable($COOKIE_FILE)) $upstreamCookieForAsset = trim(file_get_contents($COOKIE_FILE));
     $assetHeaders = [
-        'User-Agent: ' . ($_SERVER['HTTP_USER_AGENT'] ?? 'Mozilla/5.0'),
+        'User-Agent: ' . ($_SERVER['HTTP_USER_AGENT'] ?? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'),
         'Accept: ' . ($_SERVER['HTTP_ACCEPT'] ?? '*/*'),
+        'Accept-Language: ' . ($_SERVER['HTTP_ACCEPT_LANGUAGE'] ?? 'en-US,en;q=0.9'),
         'Referer: https://grok.com/',
         'Origin: https://grok.com',
+        'Sec-Fetch-Dest: ' . ($_SERVER['HTTP_SEC_FETCH_DEST'] ?? 'empty'),
+        'Sec-Fetch-Mode: ' . ($_SERVER['HTTP_SEC_FETCH_MODE'] ?? 'cors'),
+        'Sec-Fetch-Site: same-site',
     ];
     if ($upstreamCookieForAsset !== '') $assetHeaders[] = 'Cookie: ' . $upstreamCookieForAsset;
     $ach = curl_init($assetUrl);
@@ -207,14 +215,22 @@ if (preg_match('#^/__grok_(assets|cdn)(/.*)?$#', $path, $assetMatch)) {
         CURLOPT_FOLLOWLOCATION => true,
         CURLOPT_TIMEOUT        => 60,
         CURLOPT_HTTPHEADER     => $assetHeaders,
+        CURLOPT_ENCODING       => '', // accept gzip/br from CDN
     ]);
+    if ($UPSTREAM_PROXY) {
+        curl_setopt($ach, CURLOPT_PROXY, $UPSTREAM_PROXY);
+        curl_setopt($ach, CURLOPT_TIMEOUT, 90);
+        curl_setopt($ach, CURLOPT_CONNECTTIMEOUT, 25);
+    }
     $assetBody = curl_exec($ach);
     $assetStatus = curl_getinfo($ach, CURLINFO_HTTP_CODE);
     $assetCT = curl_getinfo($ach, CURLINFO_CONTENT_TYPE);
+    $assetErr = curl_error($ach);
     curl_close($ach);
+    if ($assetErr) error_log('[grok-proxy.asset] ' . $assetUrl . ' err=' . $assetErr);
     // For images (avatars), serve a transparent fallback on failure so
     // the browser doesn\'t flag a broken image.
-    if (($assetStatus < 200 || $assetStatus >= 300) && strpos($assetCT, 'image/') !== false) {
+    if (($assetStatus < 200 || $assetStatus >= 300) && (strpos($assetCT, 'image/') !== false || preg_match('#\.(png|jpg|jpeg|gif|webp|svg|ico)#i', $assetPath))) {
         http_response_code(200);
         header('Content-Type: image/png');
         header('Cache-Control: public, max-age=300');
@@ -436,9 +452,11 @@ if (($isHtml || $isJson || $isJs || $isCss || $isRsc) && $body !== '') {
     // Also rewrite the assets CDN so avatars/static load through us.
     $body = str_replace('https://assets.grok.com',  'https://' . $PROXY_HOST . '/__grok_assets', $body);
     $body = str_replace('https:\\/\\/assets.grok.com', 'https:\\/\\/' . $PROXY_HOST . '\\/__grok_assets', $body);
-    // And the JS chunk CDN so Next.js script src tags resolve through us.
-    $body = str_replace('https://cdn.grok.com',  'https://' . $PROXY_HOST . '/__grok_cdn', $body);
-    $body = str_replace('https:\\/\\/cdn.grok.com', 'https:\\/\\/' . $PROXY_HOST . '\\/__grok_cdn', $body);
+    // NOTE: we do NOT rewrite cdn.grok.com. That CDN is heavily
+    // Cloudflare-bot-protected and will 403 datacenter and residential
+    // proxy fetches alike. Instead we let the browser fetch JS/CSS/font
+    // chunks directly from cdn.grok.com — those requests come from the
+    // student\'s real IP & browser fingerprint, which Cloudflare accepts.
 
     // Neutralize generic hostname-guard IIFEs that redirect to grok.com.
     $body = preg_replace(
@@ -514,7 +532,9 @@ if ($isHtml && $body !== '') {
             . 'if(u.indexOf("http://grok.com")===0)return "https://"+PROXY_HOST+u.slice(15);'
             . 'if(u.indexOf("//grok.com")===0)return "//"+PROXY_HOST+u.slice(10);'
             . 'if(u.indexOf("https://assets.grok.com")===0)return "https://"+PROXY_HOST+"/__grok_assets"+u.slice(23);'
-            . 'if(u.indexOf("https://cdn.grok.com")===0)return "https://"+PROXY_HOST+"/__grok_cdn"+u.slice(20);'
+            // Note: cdn.grok.com is intentionally left alone — let the
+            // browser fetch chunks directly from Cloudflare with its
+            // real IP & fingerprint. Routing through us trips bot mode.
             . '}catch(e){}return u;'
         . '}'
         . 'var _origFetch=window.fetch;'
