@@ -78,15 +78,13 @@ function _forward_response_headers($headerLines) {
 }
 
 function _isRewritable($contentType) {
+    // Only HTML needs server-side rewriting (it\'s the only doc the
+    // browser parses with absolute URLs that aren\'t intercepted by
+    // our fetch shim). Everything else streams to keep RSC, SSE, JSON
+    // streams, and chat tokens flowing chunk-by-chunk. The client-side
+    // fetch interceptor handles URL rewriting at request time.
     $ct = strtolower($contentType);
-    return (
-        strpos($ct, 'text/html') !== false ||
-        strpos($ct, 'application/json') !== false ||
-        strpos($ct, 'application/javascript') !== false ||
-        strpos($ct, 'text/javascript') !== false ||
-        strpos($ct, 'text/css') !== false ||
-        strpos($ct, 'text/x-component') !== false
-    );
+    return strpos($ct, 'text/html') !== false;
 }
 
 // Grok is behind Cloudflare bot challenges. Hostinger's datacenter IP
@@ -183,20 +181,21 @@ if (preg_match('#^/cdn-cgi/#', $path) || preg_match('#^/monitoring(\?|$)#', $pat
     exit;
 }
 
-// ---------------- assets.grok.com proxy ----------------
-// Frontend code that points at the assets CDN (avatars, static images,
-// etc.) gets rewritten to /__grok_assets/... in our HTML rewriter. We
-// rewrite the path back here and forward to the real CDN. Some assets
-// (avatars, private uploads) require auth, so we forward the upstream
-// session cookies too.
-if (preg_match('#^/__grok_assets(/.*)?$#', $path, $assetMatch)) {
-    $assetPath = $assetMatch[1] ?? '/';
-    $assetUrl  = 'https://assets.grok.com' . $assetPath;
+// ---------------- assets.grok.com / cdn.grok.com proxies ----------------
+// Frontend code that points at the assets/CDN gets rewritten to
+// /__grok_assets/... or /__grok_cdn/... by our client-side fetch
+// interceptor. We rewrite the path back here and forward to the real
+// CDN. Some assets (avatars, private uploads) require auth, so we
+// forward the upstream session cookies too.
+if (preg_match('#^/__grok_(assets|cdn)(/.*)?$#', $path, $assetMatch)) {
+    $cdnHost   = ($assetMatch[1] === 'cdn') ? 'cdn.grok.com' : 'assets.grok.com';
+    $assetPath = $assetMatch[2] ?? '/';
+    $assetUrl  = 'https://' . $cdnHost . $assetPath;
     $upstreamCookieForAsset = '';
     if (is_readable($COOKIE_FILE)) $upstreamCookieForAsset = trim(file_get_contents($COOKIE_FILE));
     $assetHeaders = [
         'User-Agent: ' . ($_SERVER['HTTP_USER_AGENT'] ?? 'Mozilla/5.0'),
-        'Accept: image/avif,image/webp,*/*',
+        'Accept: ' . ($_SERVER['HTTP_ACCEPT'] ?? '*/*'),
         'Referer: https://grok.com/',
         'Origin: https://grok.com',
     ];
@@ -206,16 +205,16 @@ if (preg_match('#^/__grok_assets(/.*)?$#', $path, $assetMatch)) {
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_HEADER         => false,
         CURLOPT_FOLLOWLOCATION => true,
-        CURLOPT_TIMEOUT        => 30,
+        CURLOPT_TIMEOUT        => 60,
         CURLOPT_HTTPHEADER     => $assetHeaders,
     ]);
     $assetBody = curl_exec($ach);
     $assetStatus = curl_getinfo($ach, CURLINFO_HTTP_CODE);
     $assetCT = curl_getinfo($ach, CURLINFO_CONTENT_TYPE);
     curl_close($ach);
-    // If the CDN rejects (403 etc.), serve a transparent 1×1 PNG so the
-    // browser doesn\'t flag a broken image.
-    if ($assetStatus < 200 || $assetStatus >= 300) {
+    // For images (avatars), serve a transparent fallback on failure so
+    // the browser doesn\'t flag a broken image.
+    if (($assetStatus < 200 || $assetStatus >= 300) && strpos($assetCT, 'image/') !== false) {
         http_response_code(200);
         header('Content-Type: image/png');
         header('Cache-Control: public, max-age=300');
@@ -225,7 +224,7 @@ if (preg_match('#^/__grok_assets(/.*)?$#', $path, $assetMatch)) {
     http_response_code($assetStatus);
     if ($assetCT) header('Content-Type: ' . $assetCT);
     header('Cache-Control: public, max-age=86400');
-    echo $assetBody;
+    if ($assetBody !== false) echo $assetBody;
     exit;
 }
 
@@ -437,6 +436,9 @@ if (($isHtml || $isJson || $isJs || $isCss || $isRsc) && $body !== '') {
     // Also rewrite the assets CDN so avatars/static load through us.
     $body = str_replace('https://assets.grok.com',  'https://' . $PROXY_HOST . '/__grok_assets', $body);
     $body = str_replace('https:\\/\\/assets.grok.com', 'https:\\/\\/' . $PROXY_HOST . '\\/__grok_assets', $body);
+    // And the JS chunk CDN so Next.js script src tags resolve through us.
+    $body = str_replace('https://cdn.grok.com',  'https://' . $PROXY_HOST . '/__grok_cdn', $body);
+    $body = str_replace('https:\\/\\/cdn.grok.com', 'https:\\/\\/' . $PROXY_HOST . '\\/__grok_cdn', $body);
 
     // Neutralize generic hostname-guard IIFEs that redirect to grok.com.
     $body = preg_replace(
@@ -502,17 +504,33 @@ if ($isHtml && $body !== '') {
         // /cdn-cgi/rum on every interaction; if the response isn\'t 200,
         // their callback throws an exception that bubbles up to React\'s
         // error boundary. We make it always succeed-as-noop.
-        . 'try{var _origFetch=window.fetch;'
+        // We ALSO use this layer to rewrite outgoing URLs from grok.com
+        // to our proxy host. Server-side rewriting was buffering streams;
+        // doing it client-side keeps streams flowing.
+        . 'try{var PROXY_HOST=location.host;'
+        . 'function _rewriteUrl(u){'
+            . 'try{if(typeof u!=="string")return u;'
+            . 'if(u.indexOf("https://grok.com")===0)return "https://"+PROXY_HOST+u.slice(16);'
+            . 'if(u.indexOf("http://grok.com")===0)return "https://"+PROXY_HOST+u.slice(15);'
+            . 'if(u.indexOf("//grok.com")===0)return "//"+PROXY_HOST+u.slice(10);'
+            . 'if(u.indexOf("https://assets.grok.com")===0)return "https://"+PROXY_HOST+"/__grok_assets"+u.slice(23);'
+            . 'if(u.indexOf("https://cdn.grok.com")===0)return "https://"+PROXY_HOST+"/__grok_cdn"+u.slice(20);'
+            . '}catch(e){}return u;'
+        . '}'
+        . 'var _origFetch=window.fetch;'
         . 'window.fetch=function(input,init){'
             . 'try{var url=typeof input==="string"?input:(input&&input.url)||"";'
             . 'if(url && (url.indexOf("/cdn-cgi/")!==-1 || url.indexOf("/monitoring?")!==-1 || url.indexOf("/monitoring/")!==-1)){return Promise.resolve(new Response(null,{status:204,statusText:"No Content"}));}'
+            . 'if(typeof input==="string"){var ru=_rewriteUrl(input);if(ru!==input)input=ru;}'
+            . 'else if(input && input.url){var ru2=_rewriteUrl(input.url);if(ru2!==input.url){input=new Request(ru2,input);}}'
             . '}catch(e){}'
-            . 'return _origFetch.apply(this,arguments);'
+            . 'return _origFetch.apply(this,[input,init]);'
         . '};'
         . 'var _origSend=XMLHttpRequest.prototype.send;'
         . 'var _origOpen=XMLHttpRequest.prototype.open;'
         . 'XMLHttpRequest.prototype.open=function(method,url){'
             . 'this.__cdn_cgi=(typeof url==="string"&&(url.indexOf("/cdn-cgi/")!==-1||url.indexOf("/monitoring?")!==-1||url.indexOf("/monitoring/")!==-1));'
+            . 'if(typeof url==="string")arguments[1]=_rewriteUrl(url);'
             . 'return _origOpen.apply(this,arguments);'
         . '};'
         . 'XMLHttpRequest.prototype.send=function(){'
@@ -528,9 +546,26 @@ if ($isHtml && $body !== '') {
             . '}'
             . 'return _origSend.apply(this,arguments);'
         . '};'
+        // WebSocket URL rewrite — Grok may open ws://grok.com/* for live
+        // chat; route to our subdomain so the WS handshake reaches us.
+        . 'try{var _OrigWS=window.WebSocket;'
+        . 'window.WebSocket=function(url,protocols){'
+            . 'try{if(typeof url==="string"){'
+                . 'if(url.indexOf("wss://grok.com")===0)url="wss://"+PROXY_HOST+url.slice(14);'
+                . 'else if(url.indexOf("ws://grok.com")===0)url="wss://"+PROXY_HOST+url.slice(13);'
+            . '}}catch(e){}'
+            . 'return new _OrigWS(url,protocols);'
+        . '};'
+        . 'window.WebSocket.prototype=_OrigWS.prototype;'
+        . 'window.WebSocket.CONNECTING=_OrigWS.CONNECTING;'
+        . 'window.WebSocket.OPEN=_OrigWS.OPEN;'
+        . 'window.WebSocket.CLOSING=_OrigWS.CLOSING;'
+        . 'window.WebSocket.CLOSED=_OrigWS.CLOSED;'
+        . '}catch(e){}'
         . 'if(navigator.sendBeacon){var _origBeacon=navigator.sendBeacon.bind(navigator);'
             . 'navigator.sendBeacon=function(url,data){'
-                . 'try{if(typeof url==="string" && (url.indexOf("/cdn-cgi/")!==-1||url.indexOf("/monitoring")!==-1))return true;}catch(e){}'
+                . 'try{if(typeof url==="string" && (url.indexOf("/cdn-cgi/")!==-1||url.indexOf("/monitoring")!==-1))return true;'
+                . 'if(typeof url==="string")url=_rewriteUrl(url);}catch(e){}'
                 . 'return _origBeacon(url,data);'
             . '};}'
         . '}catch(e){}'
