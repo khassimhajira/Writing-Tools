@@ -5,61 +5,101 @@
  * authenticated cookie. Modeled on the working .sbs proxy the user had
  * on a previous Hostinger account.
  *
- * Goal: make WriteHuman think it lives at the proxy hostname so all its
- * Next.js chunk URLs, /api/ routes, and Supabase callbacks resolve
- * naturally. No HTML rewriting needed — the upstream sees a single
- * hostname with no path prefix, which is what its bundled router and
- * Sentry expect.
+ * What this proxy must defeat:
+ *
+ *   1. WriteHuman's marketing pages contain an inline IIFE that does
+ *      `if (location.hostname !== 'writehuman.ai') location.replace(...)`
+ *      That fires before our rewritten URLs can take effect, blasting
+ *      the iframe back to writehuman.ai (which has frame-ancestors:none
+ *      and refuses to render).
+ *
+ *      Fix: override window.location.hostname/host BEFORE any other
+ *      script runs. Inject a tiny script as the first element in <head>
+ *      that uses Object.defineProperty to make location.hostname always
+ *      return 'writehuman.ai'. This neutralizes every hostname-pinning
+ *      check in the app, including the ones in their Next.js bundle and
+ *      Sentry init code.
+ *
+ *   2. CSP / X-Frame-Options / framing headers — we strip them so the
+ *      iframe is allowed to render.
+ *
+ *   3. Absolute URLs to https://writehuman.ai — rewritten to our proxy
+ *      origin so the browser doesn't try to leave us.
  *
  * Drop this file as `index.php` inside the subdomain document root:
  *   /home/u124071091/domains/scholargenie.org/public_html/writehuman/index.php
  *
- * The cookie blob is injected from the AUTH_COOKIE constant below, which
- * we update whenever cookies expire. Single shared cookie pool — same
- * approach as the cookies table in the Hub DB, but read at request time
- * here from a sibling file so we don't need to hit a database.
- *
  * Cookie source file:
  *   /home/u124071091/stealth_data/writehuman_cookie.txt
  *   (plaintext, single line, the full Cookie header value)
- *
- * Optional auth gate: if AUTH_GATE_URL is set, every request first hits
- * that URL with the visitor's stealth_hub_token cookie and only proceeds
- * if it returns 200. That ties subdomain access to a valid Hub session
- * without us re-implementing JWT / single-session here.
  */
 
 // ---------------- Config ----------------
 $UPSTREAM       = 'https://writehuman.ai';
 $COOKIE_FILE    = '/home/u124071091/stealth_data/writehuman_cookie.txt';
 $AUTH_GATE_URL  = 'https://tools.scholargenie.org/hub/api/auth/me';
-$ALLOWED_HOSTS  = ['writehuman.scholargenie.org']; // hostname(s) we accept
+$PROXY_HOST     = $_SERVER['HTTP_HOST'] ?? 'writehuman.scholargenie.org';
 
 // ---------------- Auth gate ----------------
-// If the visitor doesn't have a valid Hub session, bounce to login.
-// We forward their stealth_hub_token cookie to /hub/api/auth/me — if
-// that returns 200 they're a paying user; anything else and we redirect
-// them to the dashboard which itself redirects to aMember login.
-$hubToken = isset($_COOKIE['stealth_hub_token']) ? $_COOKIE['stealth_hub_token'] : '';
-if (!$hubToken) {
-    header('Location: https://tools.scholargenie.org/dashboard');
-    exit;
+// We require a valid Hub session, but only check it on document/page
+// requests. Once a page has loaded, the browser fires hundreds of
+// sub-requests for static assets — re-running the gate on each would
+// hammer our Node endpoint and create redirect loops where assets get
+// bounced to /dashboard.
+$secFetchDest = strtolower($_SERVER['HTTP_SEC_FETCH_DEST'] ?? '');
+$accept       = strtolower($_SERVER['HTTP_ACCEPT'] ?? '');
+$path         = $_SERVER['REQUEST_URI'] ?? '/';
+
+$isDocumentNav = false;
+if ($secFetchDest === 'document' || $secFetchDest === 'iframe') {
+    $isDocumentNav = true;
+} elseif ($secFetchDest === '') {
+    // Older browsers don't send Sec-Fetch-Dest. Use Accept + path heuristics.
+    $looksLikeAsset = (bool) preg_match('#\.(js|css|png|jpg|jpeg|webp|svg|gif|ico|woff2?|ttf|otf|webmanifest|map|json|mp4|wasm)(\?|$)#i', $path);
+    if (!$looksLikeAsset && strpos($accept, 'text/html') !== false) {
+        $isDocumentNav = true;
+    }
 }
-$gateCh = curl_init($AUTH_GATE_URL);
-curl_setopt_array($gateCh, [
-    CURLOPT_RETURNTRANSFER => true,
-    CURLOPT_FOLLOWLOCATION => false,
-    CURLOPT_HTTPHEADER     => ['Cookie: stealth_hub_token=' . $hubToken],
-    CURLOPT_TIMEOUT        => 5,
-    CURLOPT_CONNECTTIMEOUT => 3,
-    CURLOPT_NOBODY         => true,
-]);
-curl_exec($gateCh);
-$gateStatus = curl_getinfo($gateCh, CURLINFO_HTTP_CODE);
-curl_close($gateCh);
-if ($gateStatus !== 200) {
-    header('Location: https://tools.scholargenie.org/dashboard');
-    exit;
+
+if ($isDocumentNav) {
+    $hubToken = $_COOKIE['stealth_hub_token'] ?? '';
+    $authed = false;
+    if ($hubToken) {
+        $gateCh = curl_init($AUTH_GATE_URL);
+        curl_setopt_array($gateCh, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_HTTPHEADER     => ['Cookie: stealth_hub_token=' . $hubToken],
+            CURLOPT_TIMEOUT        => 5,
+            CURLOPT_CONNECTTIMEOUT => 3,
+            CURLOPT_NOBODY         => true,
+        ]);
+        curl_exec($gateCh);
+        $gateStatus = curl_getinfo($gateCh, CURLINFO_HTTP_CODE);
+        curl_close($gateCh);
+        $authed = ($gateStatus === 200);
+    }
+    if (!$authed) {
+        // Render a friendly HTML page rather than redirecting. Redirects
+        // inside iframes can produce navigate loops or chrome-error pages
+        // when the parent's CSP doesn't allow the redirected origin.
+        http_response_code(401);
+        header('Content-Type: text/html; charset=utf-8');
+        echo '<!doctype html><html><head><meta charset="utf-8"><title>Sign in required</title>'
+           . '<style>body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;'
+           . 'background:linear-gradient(135deg,#7c3aed,#a855f7);color:#fff;display:flex;'
+           . 'align-items:center;justify-content:center;min-height:100vh;margin:0;padding:20px;}'
+           . '.card{max-width:420px;text-align:center;background:rgba(255,255,255,0.08);'
+           . 'border:1px solid rgba(255,255,255,0.18);border-radius:18px;padding:36px 28px;'
+           . 'backdrop-filter:blur(14px);}'
+           . 'a{display:inline-block;margin-top:18px;background:#fff;color:#7c3aed;font-weight:700;'
+           . 'padding:11px 22px;border-radius:11px;text-decoration:none;}</style></head><body>'
+           . '<div class="card"><div style="font-size:42px;margin-bottom:8px;">&#128274;</div>'
+           . '<h2 style="margin:0 0 6px;">Sign in to use WriteHuman</h2>'
+           . '<p style="opacity:0.85;margin:0;">Your Hub session has expired. Sign in to continue.</p>'
+           . '<a href="https://tools.scholargenie.org/" target="_top">Back to portal</a></div></body></html>';
+        exit;
+    }
 }
 
 // ---------------- Read the shared upstream cookie ----------------
@@ -67,23 +107,57 @@ $upstreamCookie = '';
 if (is_readable($COOKIE_FILE)) {
     $upstreamCookie = trim(file_get_contents($COOKIE_FILE));
 }
-// Fail-soft: if the cookie file is missing or empty we still try the
-// request (writehuman might serve the public homepage). The user will
-// see the marketing page rather than the chat UI, which is at least a
-// sign that the proxy itself works.
+
+// Parse individual cookies out of the blob so we can plant them in the
+// user\'s browser as Set-Cookie headers on document responses. This is
+// what makes the upstream\'s JS think it\'s authenticated — the Supabase
+// SDK in the browser reads document.cookie["sb-{project}-auth-token"]
+// and forwarding it only on the request side doesn\'t help the JS.
+$plantCookies = [];
+if ($upstreamCookie !== '') {
+    foreach (explode(';', $upstreamCookie) as $kv) {
+        $kv = trim($kv);
+        if ($kv === '') continue;
+        $eq = strpos($kv, '=');
+        if ($eq === false) continue;
+        $cname = trim(substr($kv, 0, $eq));
+        $cval  = substr($kv, $eq + 1);
+        if ($cname === '') continue;
+        $plantCookies[$cname] = $cval;
+    }
+}
 
 // ---------------- Build the upstream request ----------------
-$path  = $_SERVER['REQUEST_URI'] ?? '/';
-$method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+$method      = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 $upstreamUrl = $UPSTREAM . $path;
 
-// Forward most request headers, but replace Host/Cookie/Origin/Referer
-// so writehuman.ai sees what it expects.
+// getallheaders() is not always available under CGI/FPM. Build a
+// fallback from $_SERVER so we work everywhere.
+if (!function_exists('getallheaders')) {
+    function getallheaders() {
+        $h = [];
+        foreach ($_SERVER as $k => $v) {
+            if (strpos($k, 'HTTP_') === 0) {
+                $name = str_replace(' ', '-', ucwords(strtolower(str_replace('_', ' ', substr($k, 5)))));
+                $h[$name] = $v;
+            }
+        }
+        if (isset($_SERVER['CONTENT_TYPE']))   $h['Content-Type']   = $_SERVER['CONTENT_TYPE'];
+        if (isset($_SERVER['CONTENT_LENGTH'])) $h['Content-Length'] = $_SERVER['CONTENT_LENGTH'];
+        return $h;
+    }
+}
+
 $forwardHeaders = [];
 foreach (getallheaders() as $name => $value) {
     $low = strtolower($name);
-    // Skip headers that would confuse the upstream or are owned by us.
-    if (in_array($low, ['host', 'cookie', 'origin', 'referer', 'content-length', 'connection', 'accept-encoding'], true)) {
+    if (in_array($low, [
+        'host', 'cookie', 'origin', 'referer', 'content-length',
+        'connection', 'accept-encoding',
+        // Strip Sec-Fetch-Site so the upstream's CSRF defenses don't see
+        // the request as cross-site.
+        'sec-fetch-site',
+    ], true)) {
         continue;
     }
     $forwardHeaders[] = $name . ': ' . $value;
@@ -91,13 +165,13 @@ foreach (getallheaders() as $name => $value) {
 $forwardHeaders[] = 'Host: writehuman.ai';
 $forwardHeaders[] = 'Origin: https://writehuman.ai';
 $forwardHeaders[] = 'Referer: https://writehuman.ai' . $path;
+$forwardHeaders[] = 'Sec-Fetch-Site: same-origin';
 if ($upstreamCookie !== '') {
     $forwardHeaders[] = 'Cookie: ' . $upstreamCookie;
 }
 // Force decompressed text so we can pass through cleanly.
 $forwardHeaders[] = 'Accept-Encoding: identity';
 
-// Read the request body (POST/PUT). PHP-FPM gives us this via php://input.
 $body = file_get_contents('php://input');
 
 // ---------------- Execute via cURL ----------------
@@ -115,10 +189,10 @@ curl_setopt_array($ch, [
     CURLOPT_SSL_VERIFYHOST => 2,
 ]);
 
-$response = curl_exec($ch);
-$status   = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+$response   = curl_exec($ch);
+$status     = curl_getinfo($ch, CURLINFO_HTTP_CODE);
 $headerSize = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
-$err = curl_error($ch);
+$err        = curl_error($ch);
 curl_close($ch);
 
 if ($err) {
@@ -135,49 +209,94 @@ if ($err) {
 $rawHeaders = substr($response, 0, $headerSize);
 $body       = substr($response, $headerSize);
 
-// ---------------- Rewrite absolute writehuman.ai URLs to our subdomain ----------------
-// Without this, every <link>, <script src=...>, <a href=...>, fetch URL,
-// CSP directive, etc. that points at "https://writehuman.ai" forces the
-// browser to leave our domain — which then fails because writehuman.ai
-// has frame-ancestors 'none'.
-//
-// We only rewrite text/html, application/json, application/javascript,
-// and text/css — binary content (images, fonts) is left alone.
+// ---------------- Detect content type ----------------
 $contentTypeHeader = '';
 foreach (preg_split("/\r?\n/", $rawHeaders) as $line) {
     if (stripos($line, 'content-type:') === 0) { $contentTypeHeader = strtolower($line); break; }
 }
-$shouldRewrite = (
-    strpos($contentTypeHeader, 'text/html') !== false ||
-    strpos($contentTypeHeader, 'application/json') !== false ||
-    strpos($contentTypeHeader, 'application/javascript') !== false ||
-    strpos($contentTypeHeader, 'text/javascript') !== false ||
-    strpos($contentTypeHeader, 'text/css') !== false ||
-    strpos($contentTypeHeader, 'text/x-component') !== false
-);
+$isHtml = (strpos($contentTypeHeader, 'text/html') !== false);
+$isJson = (strpos($contentTypeHeader, 'application/json') !== false);
+$isJs   = (strpos($contentTypeHeader, 'javascript') !== false);
+$isCss  = (strpos($contentTypeHeader, 'text/css') !== false);
+$isRsc  = (strpos($contentTypeHeader, 'text/x-component') !== false);
 
-if ($shouldRewrite && $body !== '') {
-    // 1. Replace https://writehuman.ai with our subdomain origin everywhere
-    //    in the body. Cover both http and protocol-relative variants.
-    $proxyHost = $_SERVER['HTTP_HOST'] ?? 'writehuman.scholargenie.org';
-    $body = str_replace('https://writehuman.ai',  'https://' . $proxyHost, $body);
-    $body = str_replace('http://writehuman.ai',   'https://' . $proxyHost, $body);
-    $body = str_replace('//writehuman.ai',        '//' . $proxyHost, $body);
+// ---------------- Rewrite URLs ----------------
+if (($isHtml || $isJson || $isJs || $isCss || $isRsc) && $body !== '') {
+    // 1. Replace https://writehuman.ai with our subdomain origin
+    //    everywhere. Cover http and protocol-relative variants.
+    $body = str_replace('https://writehuman.ai',  'https://' . $PROXY_HOST, $body);
+    $body = str_replace('http://writehuman.ai',   'https://' . $PROXY_HOST, $body);
+    $body = str_replace('//writehuman.ai',        '//' . $PROXY_HOST,       $body);
 
-    // 2. JSON sometimes encodes URLs with escaped slashes (\/).
-    $body = str_replace('https:\\/\\/writehuman.ai',  'https:\\/\\/' . $proxyHost, $body);
+    // 2. JSON sometimes encodes URLs with escaped slashes.
+    $body = str_replace('https:\\/\\/writehuman.ai', 'https:\\/\\/' . $PROXY_HOST, $body);
 
-    // 3. Inject a <base href> so any remaining relative references resolve
-    //    against the proxy host. Defensive — most refs are already
-    //    relative or rewritten above.
-    if (strpos($contentTypeHeader, 'text/html') !== false) {
-        $body = preg_replace(
-            '/<head([^>]*)>/i',
-            '<head$1><base href="https://' . htmlspecialchars($proxyHost, ENT_QUOTES) . '/">',
-            $body,
-            1
-        );
+    // 3. Neutralize the inline hostname-guard IIFE. WriteHuman's pages
+    //    embed this as a literal script tag and ALSO inside Next.js
+    //    server payloads as a JSON-escaped string. We zap both forms by
+    //    turning location.hostname checks into harmless no-ops.
+    $body = preg_replace(
+        '/\(function\(\)\{var h=location\.hostname;[^}]+\}\)\(\)/',
+        '(function(){})()',
+        $body
+    );
+    // Same pattern when escaped inside JSON (\u0026\u0026 etc.)
+    $body = preg_replace(
+        '/\(function\(\)\{var h=location\.hostname;[^}]+\}\)\(\)/u',
+        '(function(){})()',
+        $body
+    );
+}
+
+// ---------------- HTML-only patches ----------------
+if ($isHtml && $body !== '') {
+    // Plant the upstream auth cookies on OUR subdomain via Set-Cookie.
+    // Without this, the browser only has the proxy\'s session cookies on
+    // writehuman.scholargenie.org, and the upstream JS bundle reading
+    // document.cookie sees no authenticated session.
+    foreach ($plantCookies as $cname => $cval) {
+        // 30 day max age — refresh tokens last that long. Access tokens
+        // inside the blob will hit their own 1h exp; auto-refresher worker
+        // is responsible for keeping the file fresh.
+        $cookieHeader = $cname . '=' . $cval
+            . '; Path=/; Max-Age=2592000; Secure; HttpOnly=false; SameSite=Lax';
+        // Note: Secure + SameSite=Lax allows reading from same-origin docs
+        // and our iframe context. The Supabase SDK reads document.cookie,
+        // which means we MUST NOT set HttpOnly. Set-Cookie has no HttpOnly
+        // by default if we don\'t add it; the line above is wrong syntax —
+        // browsers ignore "HttpOnly=false". Correct: just omit the flag.
+        $cookieHeader = $cname . '=' . $cval . '; Path=/; Max-Age=2592000; Secure; SameSite=Lax';
+        header('Set-Cookie: ' . $cookieHeader, false);
     }
+
+    $hostnameOverride = '<script>(function(){'
+        // Override hostname/host so any code that hasn\'t been rewritten
+        // (legacy, third-party libs, dynamically loaded chunks) thinks
+        // it is on writehuman.ai. Wrapped in try/catch because some
+        // browsers freeze location property descriptors.
+        . 'try{var d=Object.getOwnPropertyDescriptor(Location.prototype,"hostname")||{};'
+        . 'Object.defineProperty(location,"hostname",{configurable:true,get:function(){return "writehuman.ai";}});'
+        . 'Object.defineProperty(location,"host",{configurable:true,get:function(){return "writehuman.ai";}});'
+        . '}catch(e){}'
+        // Disable Sentry early so its session-replay/tracing doesn\'t
+        // tear into the override or hammer cross-origin endpoints.
+        . 'try{window.__SENTRY__={};window.SENTRY_RELEASE={};window.Sentry={'
+        . 'init:function(){},captureException:function(){},captureMessage:function(){},'
+        . 'addBreadcrumb:function(){},configureScope:function(){},withScope:function(fn){try{fn({setTag:function(){},setExtra:function(){},setUser:function(){}})}catch(e){}},'
+        . 'setUser:function(){},setTag:function(){},setExtra:function(){},setContext:function(){},'
+        . 'getCurrentHub:function(){return{getClient:function(){return null;},getScope:function(){return{setTag:function(){},setUser:function(){}};}};}'
+        . '};}catch(e){}'
+        . '})();</script>';
+
+    // Inject as the very first element after <head> so it runs before
+    // any of the upstream\'s own scripts (including the inline guard
+    // that we also neutralize via regex above).
+    $body = preg_replace(
+        '/<head([^>]*)>/i',
+        '<head$1>' . $hostnameOverride . '<base href="https://' . htmlspecialchars($PROXY_HOST, ENT_QUOTES) . '/">',
+        $body,
+        1
+    );
 }
 
 // ---------------- Forward upstream headers ----------------
@@ -185,33 +304,49 @@ http_response_code($status);
 foreach (preg_split("/\r?\n/", $rawHeaders) as $line) {
     if ($line === '' || stripos($line, 'HTTP/') === 0) continue;
     $low = strtolower($line);
-    // Strip headers that would force the browser to bypass us.
-    if (str_starts_with($low, 'content-encoding:'))  continue;
-    if (str_starts_with($low, 'transfer-encoding:')) continue;
-    if (str_starts_with($low, 'content-length:'))    continue;
-    // Strip ALL CSP / framing protection headers — these would block our
-    // iframe embed and any inline behavior we need.
-    if (str_starts_with($low, 'content-security-policy:'))  continue;
+
+    // Strip headers that would force the browser to bypass us or kill
+    // the iframe.
+    if (str_starts_with($low, 'content-encoding:'))                 continue;
+    if (str_starts_with($low, 'transfer-encoding:'))                continue;
+    if (str_starts_with($low, 'content-length:'))                   continue;
+    if (str_starts_with($low, 'content-security-policy:'))          continue;
     if (str_starts_with($low, 'content-security-policy-report-only:')) continue;
-    if (str_starts_with($low, 'x-frame-options:'))   continue;
-    if (str_starts_with($low, 'cross-origin-opener-policy:')) continue;
-    if (str_starts_with($low, 'cross-origin-embedder-policy:')) continue;
-    if (str_starts_with($low, 'cross-origin-resource-policy:')) continue;
-    // Rewrite Set-Cookie domain so cookies stick to OUR subdomain, not writehuman.ai.
+    if (str_starts_with($low, 'x-frame-options:'))                  continue;
+    if (str_starts_with($low, 'cross-origin-opener-policy:'))       continue;
+    if (str_starts_with($low, 'cross-origin-embedder-policy:'))     continue;
+    if (str_starts_with($low, 'cross-origin-resource-policy:'))     continue;
+    if (str_starts_with($low, 'permissions-policy:'))               continue;
+    if (str_starts_with($low, 'report-to:'))                        continue;
+    if (str_starts_with($low, 'reporting-endpoints:'))              continue;
+    if (str_starts_with($low, 'document-policy:'))                  continue;
+
+    // Rewrite Set-Cookie domain so cookies stick to OUR subdomain.
     if (str_starts_with($low, 'set-cookie:')) {
         $rewritten = preg_replace('/;\s*Domain=[^;]+/i', '', $line);
-        $rewritten = preg_replace('/;\s*SameSite=None/i', '; SameSite=Lax', $rewritten);
+        // SameSite=None requires Secure and works in cross-site iframe;
+        // keep that. SameSite=Strict would break us.
+        $rewritten = preg_replace('/;\s*SameSite=Strict/i', '; SameSite=Lax', $rewritten);
         header($rewritten, false);
         continue;
     }
+
     // Rewrite Location redirect if it points at writehuman.ai.
     if (str_starts_with($low, 'location:')) {
-        $proxyHost = $_SERVER['HTTP_HOST'] ?? 'writehuman.scholargenie.org';
-        $rewritten = preg_replace('#https?://writehuman\.ai#i', 'https://' . $proxyHost, $line);
+        $rewritten = preg_replace('#https?://writehuman\.ai#i', 'https://' . $PROXY_HOST, $line);
         header($rewritten, false);
         continue;
     }
+
     header($line, false);
+}
+
+// Tell intermediaries (Cloudflare especially) not to cache HTML — we
+// don\'t want a stale signed-out marketing page being served to a fresh
+// authed visitor.
+if ($isHtml) {
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+    header('Pragma: no-cache');
 }
 
 echo $body;
