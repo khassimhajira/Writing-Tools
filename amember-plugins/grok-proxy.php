@@ -142,6 +142,84 @@ if (preg_match('#^/cdn-cgi/#', $path) || preg_match('#^/monitoring\?o=\d+&p=\d+#
     exit;
 }
 
+// ---------------- api.grok.com proxy ----------------
+// Grok\'s frontend calls api.grok.com for tasks, conversations, etc.
+// We proxy these through the same residential pool so the API thinks
+// the call comes from a real browser. Streaming pass-through, no body
+// rewrites — these are JSON/SSE responses that React parses verbatim.
+if (preg_match('#^/__grok_api(/.*)?$#', $path, $apiMatch)) {
+    $apiPath = $apiMatch[1] ?? '/';
+    $apiUrl  = 'https://api.grok.com' . $apiPath;
+    $upstreamCookieForApi = is_readable($COOKIE_FILE) ? trim(file_get_contents($COOKIE_FILE)) : '';
+
+    $apiHeaders = [];
+    foreach (getallheaders() as $name => $value) {
+        $low = strtolower($name);
+        if (in_array($low, [
+            'host', 'cookie', 'origin', 'referer', 'content-length',
+            'connection', 'accept-encoding', 'sec-fetch-site',
+        ], true)) continue;
+        $apiHeaders[] = $name . ': ' . $value;
+    }
+    $apiHeaders[] = 'Host: api.grok.com';
+    $apiHeaders[] = 'Origin: https://grok.com';
+    $apiHeaders[] = 'Referer: https://grok.com/';
+    $apiHeaders[] = 'Sec-Fetch-Site: same-site';
+    if ($upstreamCookieForApi !== '') $apiHeaders[] = 'Cookie: ' . $upstreamCookieForApi;
+    $apiHeaders[] = 'Accept-Encoding: identity';
+
+    $apiBody = file_get_contents('php://input');
+
+    $apiCh = curl_init($apiUrl);
+    $_apiHdrs = [];
+    $_apiStatus = 200;
+    $_apiHdrFlushed = false;
+    curl_setopt_array($apiCh, [
+        CURLOPT_CUSTOMREQUEST  => $_SERVER['REQUEST_METHOD'] ?? 'GET',
+        CURLOPT_HTTPHEADER     => $apiHeaders,
+        CURLOPT_POSTFIELDS     => $apiBody !== '' ? $apiBody : null,
+        CURLOPT_FOLLOWLOCATION => false,
+        CURLOPT_TIMEOUT        => 180,
+        CURLOPT_CONNECTTIMEOUT => 15,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_HEADERFUNCTION => function ($ch, $line) use (&$_apiHdrs, &$_apiStatus) {
+            $t = trim($line);
+            if ($t === '') return strlen($line);
+            if (preg_match('#^HTTP/[\d.]+ (\d+)#', $t, $m)) { $_apiStatus = (int)$m[1]; $_apiHdrs = []; return strlen($line); }
+            $_apiHdrs[] = $t;
+            return strlen($line);
+        },
+        CURLOPT_WRITEFUNCTION => function ($ch, $chunk) use (&$_apiHdrs, &$_apiStatus, &$_apiHdrFlushed) {
+            if (!$_apiHdrFlushed) {
+                http_response_code($_apiStatus);
+                _forward_response_headers($_apiHdrs);
+                if (function_exists('ob_implicit_flush')) ob_implicit_flush(true);
+                while (ob_get_level() > 0) ob_end_flush();
+                $_apiHdrFlushed = true;
+            }
+            echo $chunk;
+            if (function_exists('flush')) @flush();
+            return strlen($chunk);
+        },
+    ]);
+    if ($UPSTREAM_PROXY) {
+        curl_setopt($apiCh, CURLOPT_PROXY, $UPSTREAM_PROXY);
+        curl_setopt($apiCh, CURLOPT_TIMEOUT, 240);
+        curl_setopt($apiCh, CURLOPT_CONNECTTIMEOUT, 25);
+    }
+    curl_exec($apiCh);
+    $apiErr = curl_error($apiCh);
+    curl_close($apiCh);
+    if (!$_apiHdrFlushed) {
+        http_response_code(502);
+        header('Content-Type: application/json');
+        echo '{"error":"api_unreachable"}';
+    }
+    if ($apiErr) error_log('[grok-proxy.api] ' . $apiUrl . ' err=' . $apiErr);
+    exit;
+}
+
 // ---------------- assets.grok.com proxy ----------------
 if (preg_match('#^/__grok_assets(/.*)?$#', $path, $assetMatch)) {
     $assetPath = $assetMatch[1] ?? '/';
@@ -227,6 +305,24 @@ $INJECT = '<script>(function(){'
     . 'var _origReplace=location.replace.bind(location);'
     . 'location.assign=function(u){return _origAssign(_fixLoc(u));};'
     . 'location.replace=function(u){return _origReplace(_fixLoc(u));};'
+    // Patch the `href` setter on Location.prototype so direct
+    // assignment (`location.href = "..."`) is also intercepted. This is
+    // the common pattern in production bundles.
+    . 'try{var _hrefDesc=Object.getOwnPropertyDescriptor(Location.prototype,"href");'
+    . 'if(_hrefDesc && _hrefDesc.set){var _origHrefSet=_hrefDesc.set;'
+    . 'Object.defineProperty(Location.prototype,"href",{configurable:true,enumerable:true,get:_hrefDesc.get,set:function(v){return _origHrefSet.call(this,_fixLoc(v));}});}'
+    . '}catch(e){}'
+    // Patch `window.location = "..."` — this triggers a special setter
+    // on the Window prototype that ultimately calls Location.href.
+    . 'try{var _windowLocDesc=Object.getOwnPropertyDescriptor(window,"location") || Object.getOwnPropertyDescriptor(Object.getPrototypeOf(window),"location");'
+    . 'if(_windowLocDesc && _windowLocDesc.set){var _origWindowLocSet=_windowLocDesc.set;'
+    . 'Object.defineProperty(window,"location",{configurable:true,get:_windowLocDesc.get,set:function(v){return _origWindowLocSet.call(this, typeof v==="string"?_fixLoc(v):v);}});}'
+    . '}catch(e){}'
+    // Patch document.location too (alias of window.location).
+    . 'try{var _docLocDesc=Object.getOwnPropertyDescriptor(Document.prototype,"location") || Object.getOwnPropertyDescriptor(document,"location");'
+    . 'if(_docLocDesc && _docLocDesc.set){var _origDocLocSet=_docLocDesc.set;'
+    . 'Object.defineProperty(document,"location",{configurable:true,get:_docLocDesc.get,set:function(v){return _origDocLocSet.call(this, typeof v==="string"?_fixLoc(v):v);}});}'
+    . '}catch(e){}'
     // window.open too — Grok may open an oauth window pointing to grok.com.
     . 'var _origOpen=window.open;'
     . 'window.open=function(u,t,f){return _origOpen.call(window,_fixLoc(u),t,f);};'
@@ -234,6 +330,12 @@ $INJECT = '<script>(function(){'
     // HTMLIFrameElement to rewrite src on assignment.
     . 'var _ifDesc=Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype,"src")||Object.getOwnPropertyDescriptor(HTMLElement.prototype,"src");'
     . 'if(_ifDesc && _ifDesc.set){var _origSet=_ifDesc.set;Object.defineProperty(HTMLIFrameElement.prototype,"src",{configurable:true,enumerable:true,get:_ifDesc.get,set:function(v){return _origSet.call(this,_fixLoc(v));}});}'
+    // Patch History API in case Grok uses pushState/replaceState with
+    // an absolute grok.com URL (uncommon but cheap to cover).
+    . 'try{var _ps=history.pushState.bind(history);var _rs=history.replaceState.bind(history);'
+    . 'history.pushState=function(s,t,u){return _ps(s,t,_fixLoc(u));};'
+    . 'history.replaceState=function(s,t,u){return _rs(s,t,_fixLoc(u));};'
+    . '}catch(e){}'
     . '}catch(e){}'
     // Strip CSP / X-Frame meta tags as soon as they appear. Grok\'s SSR
     // injects <meta http-equiv="Content-Security-Policy" content="...
@@ -279,6 +381,7 @@ $INJECT = '<script>(function(){'
         . 'if(u.indexOf("http://grok.com")===0)return "https://"+PROXY_HOST+u.slice(15);'
         . 'if(u.indexOf("//grok.com")===0)return "//"+PROXY_HOST+u.slice(10);'
         . 'if(u.indexOf("https://assets.grok.com")===0)return "https://"+PROXY_HOST+"/__grok_assets"+u.slice(23);'
+        . 'if(u.indexOf("https://api.grok.com")===0)return "https://"+PROXY_HOST+"/__grok_api"+u.slice(20);'
         . '}catch(e){}return u;'
     . '}'
     . 'function _tele(url){'
