@@ -40,6 +40,24 @@ $COOKIE_FILE    = '/home/u124071091/stealth_data/grok_cookie.txt';
 $AUTH_GATE_URL  = 'https://tools.scholargenie.org/hub/api/auth/me';
 $PROXY_HOST     = $_SERVER['HTTP_HOST'] ?? 'grok.scholargenie.org';
 
+// Grok is behind Cloudflare bot challenges. Hostinger's datacenter IP
+// gets 403'd ("Just a moment..."). We route every upstream request
+// through a residential proxy from the rotating pool — same proxies
+// the Node app uses for stealthwriter.
+$PROXY_POOL_FILE = '/home/u124071091/stealth_data/grok_upstream_proxies.txt';
+$UPSTREAM_PROXY  = '';
+if (is_readable($PROXY_POOL_FILE)) {
+    $proxies = array_filter(array_map('trim', file($PROXY_POOL_FILE)));
+    if (!empty($proxies)) {
+        // Sticky-ish: pick by visitor IP + day so the same student keeps
+        // hitting the same exit IP for the day. Reduces Cloudflare risk
+        // scores and keeps Grok's session-cookie heuristics happy.
+        $key = ($_SERVER['REMOTE_ADDR'] ?? '0') . ':' . date('Y-m-d');
+        $idx = abs(crc32($key)) % count($proxies);
+        $UPSTREAM_PROXY = $proxies[$idx];
+    }
+}
+
 // ---------------- Auth gate (only on document/iframe nav) ----------------
 $secFetchDest = strtolower($_SERVER['HTTP_SEC_FETCH_DEST'] ?? '');
 $accept       = strtolower($_SERVER['HTTP_ACCEPT'] ?? '');
@@ -167,6 +185,13 @@ curl_setopt_array($ch, [
     CURLOPT_SSL_VERIFYPEER => true,
     CURLOPT_SSL_VERIFYHOST => 2,
 ]);
+// Route through residential proxy if configured. Format: http://user:pass@host:port
+if ($UPSTREAM_PROXY) {
+    curl_setopt($ch, CURLOPT_PROXY, $UPSTREAM_PROXY);
+    // Be patient with residential proxies (variable latency).
+    curl_setopt($ch, CURLOPT_TIMEOUT, 90);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 20);
+}
 
 $response   = curl_exec($ch);
 $status     = curl_getinfo($ch, CURLINFO_HTTP_CODE);

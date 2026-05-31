@@ -1109,28 +1109,98 @@ router.put('/services/:id/cookie-file', async (req, res) => {
         }
         } else {
             // ---- Generic cookie parser ----
-            // For non-Supabase services (Grok, future ones) we accept any
-            // well-formed `name=value; name=value` paste. We do NOT try
-            // to decode anything — we just preserve what the admin gave
-            // us. Validation: at least one auth-looking pair must exist.
-            const PAIR_RE = /([a-zA-Z][a-zA-Z0-9_.\-]{1,80})\s*=\s*([^;\n\r,\s][^;\n\r]*)/g;
+            // For non-Supabase services (Grok, future ones) we accept
+            // multiple paste shapes — DevTools is inconsistent:
+            //   1. "name=value; name=value" (Network tab Cookie header)
+            //   2. "name: value\n name: value" (Application tab row copy)
+            //   3. "name: valueotherName: othervalue..." (DevTools rows
+            //      concatenated together with no separator at all)
+            //
+            // Strategy: try strict name=value first. If we don\'t get at
+            // least two pairs, fall back to a known-name parser that
+            // splits on recognized cookie-name markers.
             const generic = {};
+
+            // Pass 1: strict `name=value` pairs separated by ; or newline.
+            const STRICT_PAIR_RE = /([a-zA-Z][a-zA-Z0-9_.\-]{1,80})\s*=\s*([^;\n\r,\s][^;\n\r]*)/g;
             let pm;
-            while ((pm = PAIR_RE.exec(pasted)) !== null) {
+            while ((pm = STRICT_PAIR_RE.exec(pasted)) !== null) {
                 const name = pm[1].trim();
                 const value = pm[2].trim();
-                if (!name || !value) continue;
-                generic[name] = value;
+                if (name && value) generic[name] = value;
             }
+
+            // Pass 2: known-name marker split. Catches DevTools row copies
+            // like "sso: eyJ...sso-rw: eyJ...x-anonuserid: 2918..." where
+            // values run into the next name with no delimiter.
+            if (Object.keys(generic).length < 2) {
+                const KNOWN_NAMES = [
+                    // Grok / X
+                    'sso-rw', 'sso', 'x-anonuserid', 'x-anon-user-id',
+                    // Cloudflare anti-bot
+                    'cf_clearance', '__cf_bm', 'cf_bm',
+                    // Supabase (handled above, but listed defensively)
+                    'sb-session-token',
+                    // Generic auth/session
+                    'authorization', 'auth',
+                    'session_token', 'session_id', 'sessionid', 'session',
+                    'access_token', 'refresh_token',
+                    'csrf_token', 'csrftoken', 'csrf',
+                    'jwt', 'token',
+                    // WriteHuman extras
+                    'wh_anon_id', 'wh_utm',
+                    // Common analytics — caught so they don\'t spill into auth values
+                    '_gcl_au', '_gcl_aw', '_ga', '_gid', '_gat',
+                    'intercom-session', 'intercom-device-id', 'intercom-id',
+                    'amplitude_id', 'mp_id',
+                ];
+                // Longer names first so "sso-rw" wins over "sso".
+                const sorted = KNOWN_NAMES.slice().sort((a, b) => b.length - a.length);
+                const namesAlt = sorted.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+                const MARKER_RE = new RegExp('(' + namesAlt + ')\\s*[:=]\\s*', 'gi');
+
+                const markers = [];
+                let mk;
+                while ((mk = MARKER_RE.exec(pasted)) !== null) {
+                    markers.push({ name: mk[1].toLowerCase(), start: mk.index, end: mk.index + mk[0].length });
+                }
+
+                // De-dup: if two markers overlap (e.g. "session_id" contains
+                // "session"), keep the leftmost-longest. The sort makes
+                // earlier-starting markers come first, ties broken by length.
+                markers.sort((a, b) => a.start - b.start || (b.end - b.start) - (a.end - a.start));
+                const filtered = [];
+                let lastEnd = -1;
+                for (const m of markers) {
+                    if (m.start >= lastEnd) {
+                        filtered.push(m);
+                        lastEnd = m.end;
+                    }
+                }
+
+                for (let i = 0; i < filtered.length; i++) {
+                    const m = filtered[i];
+                    const valueStart = m.end;
+                    const valueEnd = (i + 1 < filtered.length) ? filtered[i + 1].start : pasted.length;
+                    const value = pasted.substring(valueStart, valueEnd).trim().replace(/[;,\s]+$/, '');
+                    if (value) generic[m.name] = value;
+                }
+            }
+
+            // Pass 3: last-ditch single pair (admin pasted just one cookie).
+            if (Object.keys(generic).length === 0) {
+                const single = pasted.match(/^([a-zA-Z][a-zA-Z0-9_.\-]+)\s*[:=]\s*(.+)$/);
+                if (single) generic[single[1].trim()] = single[2].trim();
+            }
+
             const keys = Object.keys(generic);
             if (keys.length === 0) {
                 return res.status(400).json({
-                    error: 'No "name=value" cookie pairs found in your paste. In DevTools → Application → Cookies, copy each row\'s name and value, separated by ";" — for Grok the important ones are sso, sso-rw, x-anonuserid.'
+                    error: 'No cookies found in your paste. In DevTools → Application → Cookies, copy each row\'s name and value, separated by ";" — for Grok the important ones are sso, sso-rw, x-anonuserid.'
                 });
             }
             // Heuristic: at least one cookie name should look auth-related.
-            // We allow any of these patterns to satisfy the check.
-            const hasAuthLike = keys.some(k => /^(sso|sso-rw|sb-.*-auth-token|auth|session|token|access_token|refresh_token|x-anonuserid|jwt|.+_session|.+_token)$/i.test(k));
+            const hasAuthLike = keys.some(k => /^(sso|sso-rw|sb-.*-auth-token|auth|authorization|session|sessionid|session_id|session_token|token|access_token|refresh_token|x-anonuserid|jwt|.+_session|.+_token)$/i.test(k));
             if (!hasAuthLike) {
                 return res.status(400).json({
                     error: 'None of the cookies you pasted look like an auth/session token. For Grok, include at least "sso=...". Cookie names found: ' + keys.join(', ')
@@ -1139,7 +1209,6 @@ router.put('/services/:id/cookie-file', async (req, res) => {
 
             orderedKeys = keys;
             cookieLine = keys.map(k => `${k}=${generic[k]}`).join('; ');
-            // Generic services have no Supabase metadata to surface.
             meta = {
                 expires_at: null,
                 email: null,
